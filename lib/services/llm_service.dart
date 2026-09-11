@@ -22,6 +22,15 @@ class LlmService {
   /// 通用对话请求，返回模型回复文本
   static Future<String> chat(String userContent,
       {String? system, double temperature = 0.3}) async {
+    return chatMessages([
+      if (system != null) {'role': 'system', 'content': system},
+      {'role': 'user', 'content': userContent},
+    ], temperature: temperature);
+  }
+
+  /// 多轮对话请求：messages 为完整的 OpenAI 格式消息列表
+  static Future<String> chatMessages(List<Map<String, String>> messages,
+      {double temperature = 0.3}) async {
     if (!isConfigured) {
       throw LlmException('AI 服务未就绪，请到「我的」页开启内置模型或配置自定义模型');
     }
@@ -37,11 +46,7 @@ class LlmService {
             body: jsonEncode({
               'model': model,
               'temperature': temperature,
-              'messages': [
-                if (system != null)
-                  {'role': 'system', 'content': system},
-                {'role': 'user', 'content': userContent},
-              ],
+              'messages': messages,
             }),
           )
           .timeout(const Duration(seconds: 90));

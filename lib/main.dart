@@ -6,11 +6,14 @@ import 'pages/ai_analysis_page.dart';
 import 'pages/budget_page.dart';
 import 'pages/home_page.dart';
 import 'pages/profile_page.dart';
+import 'services/recurring_service.dart';
 import 'services/settings_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SettingsService.init();
+  // 启动时补记到期的周期账单（错过若干天也会一次性补齐）
+  await RecurringService.runDueBills();
   runApp(const SmartLedgerApp());
 }
 

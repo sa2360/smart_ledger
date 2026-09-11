@@ -4,6 +4,7 @@ import '../common/global.dart';
 import '../db/database_helper.dart';
 import '../models/bill.dart';
 import '../models/budget.dart';
+import '../services/recurring_service.dart';
 import 'bill_edit_page.dart';
 import 'widgets/common.dart';
 
@@ -47,6 +48,8 @@ class _HomePageState extends State<HomePage> {
   Future<void> _load() async {
     final now = DateTime.now();
     final db = DatabaseHelper.instance;
+    // 长时间驻留后台后回到 App，也补记到期的周期账单
+    await RecurringService.runDueBills();
     final results = await Future.wait([
       db.sumOfMonth(0, monthStr(now)),
       db.sumOfMonth(1, monthStr(now)),

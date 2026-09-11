@@ -8,6 +8,8 @@ import '../services/llm_service.dart';
 import '../services/settings_service.dart';
 import 'widgets/chart.dart';
 import 'widgets/common.dart';
+import 'widgets/trend_chart.dart';
+import 'ai_chat_page.dart';
 
 /// AI 分析页：月度消费报告 + 省钱建议 + 下月预算方案（可一键应用）
 class AiAnalysisPage extends StatefulWidget {
@@ -22,6 +24,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
   String? _report; // AI 报告（Markdown）
   Map<String, double> _plan = {};
   Map<String, double> _cateSpend = {};
+  List<(String, double, double)> _trend = [];
   double _expense = 0, _income = 0;
   String _month = '';
 
@@ -57,6 +60,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
       db.sumOfMonth(0, month),
       db.sumOfMonth(1, month),
       db.categorySpendOfMonth(month),
+      db.monthlySummaries(6),
     ]);
     if (!mounted) return;
     setState(() {
@@ -64,6 +68,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
       _expense = results[0] as double;
       _income = results[1] as double;
       _cateSpend = results[2] as Map<String, double>;
+      _trend = results[3] as List<(String, double, double)>;
     });
   }
 
@@ -148,6 +153,21 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
               children: [
                 _statsCard(),
                 const SizedBox(height: 12),
+                _chatEntryCard(),
+                const SizedBox(height: 12),
+                if (_trend.any((t) => t.$2 > 0 || t.$3 > 0)) ...[
+                  _card(Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('近 6 个月收支趋势',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      const SizedBox(height: 14),
+                      TrendLineChart(data: _trend),
+                    ],
+                  )),
+                  const SizedBox(height: 12),
+                ],
                 if (_cateSpend.isNotEmpty) ...[
                   _card(Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -181,6 +201,50 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
             ),
     );
   }
+
+  /// AI 记账助手入口卡片
+  Widget _chatEntryCard() => InkWell(
+        onTap: () => Navigator.push(
+            context, MaterialPageRoute(builder: (_) => const AiChatPage())),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF7E57C2).withValues(alpha: .15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.forum,
+                    color: Color(0xFF7E57C2), size: 22),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('AI 记账助手',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15)),
+                    SizedBox(height: 2),
+                    Text('直接问它：「我这个月奶茶花了多少？」',
+                        style:
+                            TextStyle(fontSize: 12, color: Colors.black54)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.grey),
+            ],
+          ),
+        ),
+      );
 
   Widget _statsCard() => Container(
         padding: const EdgeInsets.all(14),

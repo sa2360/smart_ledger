@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/llm_service.dart';
 import '../services/settings_service.dart';
+import 'recurring_page.dart';
 
 /// 我的页：AI 服务配置（内置模型免配置 / 自定义模型）+ 关于信息
 class ProfilePage extends StatefulWidget {
@@ -91,6 +92,41 @@ class _ProfilePageState extends State<ProfilePage> {
                       SettingsService.useCustom ? _customForm() : const SizedBox.shrink(),
                 ),
               ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          InkWell(
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const RecurringPage())),
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.event_repeat,
+                      size: 20, color: Color(0xFF1E88E5)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('周期记账',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 14)),
+                        SizedBox(height: 2),
+                        Text('房租、订阅等固定收支，到期自动入账',
+                            style:
+                                TextStyle(fontSize: 12, color: Colors.black54)),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right, color: Colors.grey),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 14),

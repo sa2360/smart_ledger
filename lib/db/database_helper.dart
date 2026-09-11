@@ -3,6 +3,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/bill.dart';
 import '../models/budget.dart';
+import '../models/recurring.dart';
 
 /// 本地 SQLite 数据库单例
 /// 表结构与《软件设计说明书》第四章一致：
@@ -24,7 +25,7 @@ class DatabaseHelper {
     final path = p.join(dir, 'smart_ledger.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE bill_table (
@@ -46,8 +47,30 @@ class DatabaseHelper {
         ''');
         await db.execute(
             'CREATE INDEX idx_bill_create_time ON bill_table(create_time)');
+        await _createRecurringTable(db);
+      },
+      onUpgrade: (db, oldV, newV) async {
+        if (oldV < 2) {
+          await _createRecurringTable(db);
+        }
       },
     );
+  }
+
+  static Future<void> _createRecurringTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS recurring_table (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        money FLOAT,
+        type INTEGER,
+        category TEXT,
+        remark TEXT,
+        cycle TEXT,
+        day INTEGER,
+        last_run TEXT,
+        enabled INTEGER DEFAULT 1
+      )
+    ''');
   }
 
   // ---------------- 账单 CRUD ----------------
@@ -151,5 +174,65 @@ class DatabaseHelper {
     final d = await db;
     await d.delete('budget_table', where: 'month = ?', whereArgs: [budget.month]);
     await d.insert('budget_table', budget.toMap());
+  }
+
+  // ---------------- 周期记账 CRUD ----------------
+
+  Future<List<Recurring>> queryRecurrings({bool enabledOnly = false}) async {
+    final d = await db;
+    final res = await d.query('recurring_table',
+        where: enabledOnly ? 'enabled = 1' : null,
+        orderBy: 'id DESC');
+    return res.map(Recurring.fromMap).toList();
+  }
+
+  Future<int> insertRecurring(Recurring r) async {
+    final d = await db;
+    return d.insert('recurring_table', r.toMap());
+  }
+
+  Future<int> updateRecurring(Recurring r) async {
+    final d = await db;
+    return d.update('recurring_table', r.toMap(),
+        where: 'id = ?', whereArgs: [r.id]);
+  }
+
+  Future<int> deleteRecurring(int id) async {
+    final d = await db;
+    return d.delete('recurring_table', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------------- 统计扩展 ----------------
+
+  /// 近 count 个月的月度收支汇总，按月份升序
+  /// 返回 (月份, 支出, 收入) 列表
+  Future<List<(String, double, double)>> monthlySummaries(int count) async {
+    final d = await db;
+    final now = DateTime.now();
+    final months = <String>[
+      for (var i = count - 1; i >= 0; i--)
+        (now.month - i <= 0)
+            ? '${now.year - 1}-${(now.month - i + 12).toString().padLeft(2, '0')}'
+            : '${now.year}-${(now.month - i).toString().padLeft(2, '0')}'
+    ];
+    final res = await d.rawQuery(
+      'SELECT substr(create_time, 1, 7) AS m, type, SUM(money) AS s '
+      'FROM bill_table GROUP BY m, type',
+    );
+    final map = <String, List<double>>{}; // month -> [expense, income]
+    for (final row in res) {
+      final m = row['m'] as String;
+      final type = row['type'] as int;
+      final s = (row['s'] as num?)?.toDouble() ?? 0;
+      final pair = map.putIfAbsent(m, () => [0, 0]);
+      if (type == 0) {
+        pair[0] = s;
+      } else {
+        pair[1] = s;
+      }
+    }
+    return [
+      for (final m in months) (m, map[m]?[0] ?? 0, map[m]?[1] ?? 0),
+    ];
   }
 }
