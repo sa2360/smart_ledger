@@ -144,6 +144,54 @@ class DatabaseHelper {
     return (res.first['s'] as num?)?.toDouble() ?? 0;
   }
 
+  /// 统计 [start, end] 日期区间（含端点）内某类型总金额
+  Future<double> sumBetween(DateTime start, DateTime end, {int type = 0}) async {
+    final d = await db;
+    String fmt(DateTime x) =>
+        '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
+    final res = await d.rawQuery(
+      "SELECT SUM(money) AS s FROM bill_table WHERE type = ? "
+      "AND substr(create_time, 1, 10) >= ? AND substr(create_time, 1, 10) <= ?",
+      [type, fmt(start), fmt(end)],
+    );
+    return (res.first['s'] as num?)?.toDouble() ?? 0;
+  }
+
+  /// 搜索账单：备注/分类关键词 + 分类过滤 + 金额区间
+  Future<List<Bill>> searchBills({
+    String? keyword,
+    String? category,
+    double? minMoney,
+    double? maxMoney,
+  }) async {
+    final d = await db;
+    final where = <String>[];
+    final args = <Object>[];
+    if (keyword != null && keyword.trim().isNotEmpty) {
+      where.add('(remark LIKE ? OR category LIKE ?)');
+      final kw = '%${keyword.trim()}%';
+      args..add(kw)..add(kw);
+    }
+    if (category != null && category.isNotEmpty) {
+      where.add('category = ?');
+      args.add(category);
+    }
+    if (minMoney != null) {
+      where.add('money >= ?');
+      args.add(minMoney);
+    }
+    if (maxMoney != null) {
+      where.add('money <= ?');
+      args.add(maxMoney);
+    }
+    final res = await d.query('bill_table',
+        where: where.isEmpty ? null : where.join(' AND '),
+        whereArgs: args.isEmpty ? null : args,
+        orderBy: 'create_time DESC, id DESC',
+        limit: 500);
+    return res.map(Bill.fromMap).toList();
+  }
+
   /// 统计某月各分类支出总额，按金额降序
   Future<Map<String, double>> categorySpendOfMonth(String month) async {
     final d = await db;
@@ -200,6 +248,22 @@ class DatabaseHelper {
   Future<int> deleteRecurring(int id) async {
     final d = await db;
     return d.delete('recurring_table', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------------- 备份 / 恢复 ----------------
+
+  /// 读取整表原始数据（备份用）
+  Future<List<Map<String, Object?>>> rawTable(String table) async {
+    final d = await db;
+    return d.query(table);
+  }
+
+  /// 恢复备份前清空全部业务数据
+  Future<void> clearAllForRestore() async {
+    final d = await db;
+    await d.delete('bill_table');
+    await d.delete('budget_table');
+    await d.delete('recurring_table');
   }
 
   // ---------------- 统计扩展 ----------------

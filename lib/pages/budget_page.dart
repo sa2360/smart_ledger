@@ -108,10 +108,10 @@ class _BudgetPageState extends State<BudgetPage> {
                     labelText: '月度总预算（元）', prefixText: '¥ '),
               ),
               const SizedBox(height: 10),
-              const Align(
+              Align(
                   alignment: Alignment.centerLeft,
                   child: Text('分类预算（选填）：',
-                      style: TextStyle(fontSize: 13, color: Colors.black54))),
+                      style: TextStyle(fontSize: 13, color: context.subtext))),
               for (final c in _cates)
                 TextField(
                   controller: ctrls[c],
@@ -160,7 +160,7 @@ class _BudgetPageState extends State<BudgetPage> {
     final over = _monthExpense > total && total > 0;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: context.bg,
       appBar: AppBar(
         title: Text('预算管理（$_month）',
             style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -336,7 +336,7 @@ class _BudgetPageState extends State<BudgetPage> {
   Widget _card(Widget child) => Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.card,
           borderRadius: BorderRadius.circular(14),
         ),
         child: child,

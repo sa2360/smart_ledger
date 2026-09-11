@@ -4,6 +4,7 @@ import '../db/database_helper.dart';
 import '../models/bill.dart';
 import '../services/bill_qa_service.dart';
 import '../services/settings_service.dart';
+import 'widgets/common.dart';
 
 class _ChatMsg {
   final String role; // user / assistant
@@ -125,7 +126,7 @@ class _AiChatPageState extends State<AiChatPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: context.bg,
       appBar: AppBar(
         title: const Text('AI 记账助手',
             style: TextStyle(fontWeight: FontWeight.bold)),
@@ -214,7 +215,7 @@ class _AiChatPageState extends State<AiChatPage> {
           margin: const EdgeInsets.only(bottom: 10),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: context.card,
             borderRadius: BorderRadius.circular(14),
           ),
           child: const SizedBox(

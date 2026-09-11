@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../common/global.dart';
 import '../db/database_helper.dart';
 import '../models/bill.dart';
+import '../services/local_stores.dart';
 import 'widgets/common.dart';
 
 /// 账单修改 / 删除
@@ -36,7 +37,7 @@ class _BillEditPageState extends State<BillEditPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: context.bg,
       appBar: AppBar(
         title: const Text('账单详情', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
@@ -52,7 +53,7 @@ class _BillEditPageState extends State<BillEditPage> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: context.card,
               borderRadius: BorderRadius.circular(14),
             ),
             child: Column(
@@ -150,6 +151,11 @@ class _BillEditPageState extends State<BillEditPage> {
   Future<void> _save() async {
     final money = double.tryParse(_moneyCtrl.text.trim());
     if (money == null || money <= 0) return;
+    // 分类纠错学习：用户改了分类且备注非空时记录下来，
+    // 之后自然语言解析会参考这些「备注关键词→正确分类」
+    if (_category != _bill.category && _remarkCtrl.text.trim().isNotEmpty) {
+      await CorrectionStore.add(_remarkCtrl.text.trim(), _category);
+    }
     await DatabaseHelper.instance.updateBill(_bill.copyWith(
       money: money,
       type: _expense ? 0 : 1,

@@ -2,6 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../../models/bill.dart';
 
+/// 主题相关扩展：页面统一从这里取背景/卡片/文字颜色，深浅色模式自动适配
+extension AppThemeColors on BuildContext {
+  Color get bg => Theme.of(this).scaffoldBackgroundColor;
+  Color get card => Theme.of(this).colorScheme.surface;
+  Color get onSurface => Theme.of(this).colorScheme.onSurface;
+  Color get subtext => Theme.of(this).colorScheme.onSurfaceVariant;
+  Color get divider => Theme.of(this).dividerColor;
+}
+
 /// 分类图标与颜色
 const Map<String, IconData> categoryIcons = {
   '餐饮': Icons.restaurant,
@@ -116,7 +125,7 @@ class StatCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.card,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Column(

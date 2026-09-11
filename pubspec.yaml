@@ -16,8 +16,17 @@ dependencies:
   shared_preferences: ^2.3.4   # 保存 API Key 等设置
   image_picker: ^1.1.2         # 拍照 / 相册选取小票
   google_mlkit_text_recognition: ^0.15.0  # 端上离线 OCR（中文）
-  fl_chart: ^0.70.2            # 分类支出饼图
+  fl_chart: ^0.70.2            # 分类支出饼图 / 收支趋势折线图
   flutter_markdown_plus: ^1.0.3  # 渲染 AI 月度报告
+  speech_to_text: ^7.0.0       # 语音记账：语音转文字
+  share_plus: ^11.0.0          # 导出 CSV / 备份分享
+  path_provider: ^2.1.5        # 导出临时文件路径
+  file_picker: ^10.0.0         # 恢复备份：选择备份文件
+
+# path_provider_android 2.3+ 引入 JNI 原生实现（需要 CMake/NDK 构建），
+# 锁定到纯 MethodChannel 版本，保持构建轻量
+dependency_overrides:
+  path_provider_android: 2.2.10
 
 dev_dependencies:
   flutter_test:

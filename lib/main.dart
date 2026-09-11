@@ -20,23 +20,36 @@ Future<void> main() async {
 class SmartLedgerApp extends StatelessWidget {
   const SmartLedgerApp({super.key});
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '一语记 · 智能收支记账',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
+  static ThemeData _theme(ColorScheme scheme, Color scaffoldBg) => ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1E88E5)),
-        scaffoldBackgroundColor: const Color(0xFFF3F4F6),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF3F4F6),
+        colorScheme: scheme,
+        scaffoldBackgroundColor: scaffoldBg,
+        appBarTheme: AppBarTheme(
+          backgroundColor: scaffoldBg,
           surfaceTintColor: Colors.transparent,
           elevation: 0,
           centerTitle: false,
         ),
-      ),
-      home: const MainPage(),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: SettingsService.themeModeListenable,
+      builder: (context, mode, _) {
+        final lightScheme =
+            ColorScheme.fromSeed(seedColor: const Color(0xFF1E88E5));
+        final darkScheme = ColorScheme.fromSeed(
+            seedColor: const Color(0xFF1E88E5), brightness: Brightness.dark);
+        return MaterialApp(
+          title: '一语记 · 智能收支记账',
+          debugShowCheckedModeBanner: false,
+          theme: _theme(lightScheme, const Color(0xFFF3F4F6)),
+          darkTheme: _theme(darkScheme, darkScheme.surfaceContainerLowest),
+          themeMode: mode,
+          home: const MainPage(),
+        );
+      },
     );
   }
 }

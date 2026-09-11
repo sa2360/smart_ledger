@@ -35,7 +35,7 @@ class _RecurringPageState extends State<RecurringPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: context.bg,
       appBar: AppBar(
         title: const Text('周期记账',
             style: TextStyle(fontWeight: FontWeight.bold)),
@@ -83,7 +83,7 @@ class _RecurringPageState extends State<RecurringPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.card,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -200,8 +200,8 @@ class _RecurringPageState extends State<RecurringPage> {
                       labelText: '备注', hintText: '如：房租 / 视频会员'),
                 ),
                 const SizedBox(height: 12),
-                const Text('分类',
-                    style: TextStyle(fontSize: 13, color: Colors.black54)),
+                Text('分类',
+                    style: TextStyle(fontSize: 13, color: context.subtext)),
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
@@ -228,8 +228,8 @@ class _RecurringPageState extends State<RecurringPage> {
                 ),
                 if (cycle == 'weekly') ...[
                   const SizedBox(height: 12),
-                  const Text('星期',
-                      style: TextStyle(fontSize: 13, color: Colors.black54)),
+                  Text('星期',
+                      style: TextStyle(fontSize: 13, color: context.subtext)),
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 6,

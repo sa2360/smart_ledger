@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 import '../common/global.dart';
 import '../db/database_helper.dart';
 import '../models/bill.dart';
 import '../services/llm_service.dart';
+import '../services/local_stores.dart';
 import '../services/settings_service.dart';
 import 'widgets/common.dart';
 
@@ -35,6 +37,14 @@ class _AddBillPageState extends State<AddBillPage>
   final _nlCtrl = TextEditingController();
   bool _nlLoading = false;
 
+  // 语音记账
+  final _speech = SpeechToText();
+  bool _speechReady = false;
+  bool _listening = false;
+
+  // 常用模板
+  List<Map<String, dynamic>> _templates = [];
+
   // 小票记账
   bool _ocrLoading = false;
   String? _ocrText;
@@ -43,6 +53,17 @@ class _AddBillPageState extends State<AddBillPage>
   static const _incomeCates = ['工资', '兼职', '理财', '红包', '其他'];
 
   static String _p(int n) => n.toString().padLeft(2, '0');
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTemplates();
+  }
+
+  Future<void> _loadTemplates() async {
+    final list = await TemplateStore.list();
+    if (mounted) setState(() => _templates = list);
+  }
 
   @override
   void dispose() {
@@ -56,7 +77,7 @@ class _AddBillPageState extends State<AddBillPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: context.bg,
       appBar: AppBar(
         title: const Text('记一笔', style: TextStyle(fontWeight: FontWeight.bold)),
         bottom: TabBar(
@@ -83,6 +104,7 @@ class _AddBillPageState extends State<AddBillPage>
   Widget _manualTab() => ListView(
         padding: const EdgeInsets.all(14),
         children: [
+          if (_templates.isNotEmpty) _templateRow(),
           _card(Column(children: [
             Row(children: [
               Expanded(
@@ -170,17 +192,122 @@ class _AddBillPageState extends State<AddBillPage>
             ),
           ])),
           const SizedBox(height: 18),
-          FilledButton(
-            style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF1E88E5),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14))),
-            onPressed: _saveManual,
-            child: const Text('保存', style: TextStyle(fontSize: 16)),
-          ),
+          Row(children: [
+            Expanded(
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF1E88E5),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14))),
+                onPressed: _saveManual,
+                child: const Text('保存', style: TextStyle(fontSize: 16)),
+              ),
+            ),
+            const SizedBox(width: 10),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14)),
+              onPressed: _saveTemplate,
+              icon: const Icon(Icons.bookmark_add_outlined, size: 18),
+              label: const Text('存为模板'),
+            ),
+          ]),
         ],
       );
+
+  /// 常用模板横排：点击填入表单，长按删除
+  Widget _templateRow() => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: context.card,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: SizedBox(
+          height: 36,
+          child: Row(children: [
+            Icon(Icons.bookmark, size: 16, color: Colors.amber.shade700),
+            const SizedBox(width: 6),
+            Expanded(
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _templates.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 6),
+                itemBuilder: (_, i) {
+                  final t = _templates[i];
+                  return InkWell(
+                    onTap: () => _applyTemplate(t),
+                    onLongPress: () => _deleteTemplate(i),
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE3F2FD),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        '${t["is_income"] == 1 ? "+" : "-"}¥${t["money"]} ${t["remark"] ?? t["category"]}',
+                        style: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ]),
+        ),
+      );
+
+  void _applyTemplate(Map<String, dynamic> t) {
+    setState(() {
+      _expense = t['is_income'] != 1;
+      _moneyCtrl.text = '${t['money']}';
+      _remarkCtrl.text = '${t['remark'] ?? ''}';
+      _category = '${t['category'] ?? '其他'}';
+      _time = DateTime.now();
+    });
+  }
+
+  Future<void> _deleteTemplate(int i) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('删除模板'),
+        content: const Text('确定删除这个常用模板吗？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await TemplateStore.removeAt(i);
+      _loadTemplates();
+    }
+  }
+
+  Future<void> _saveTemplate() async {
+    final money = double.tryParse(_moneyCtrl.text.trim());
+    if (money == null || money <= 0) {
+      _toast('先填写金额，再保存为模板');
+      return;
+    }
+    await TemplateStore.add({
+      'money': money,
+      'is_income': _expense ? 0 : 1,
+      'category': _category,
+      'remark': _remarkCtrl.text.trim(),
+    });
+    _loadTemplates();
+    _toast('已保存为常用模板');
+  }
 
   Future<void> _pickTime() async {
     final date = await showDatePicker(
@@ -244,8 +371,8 @@ class _AddBillPageState extends State<AddBillPage>
                         fontSize: 11, color: Colors.grey.shade500)),
               ]),
               const SizedBox(height: 10),
-              const Text('直接用一句话描述你的消费，AI 会自动拆分账单、识别金额、智能分类：',
-                  style: TextStyle(fontSize: 13, color: Colors.black54)),
+              Text('直接用一句话描述你的消费，AI 会自动拆分账单、识别金额、智能分类：',
+                  style: TextStyle(fontSize: 13, color: context.subtext)),
               const SizedBox(height: 12),
               TextField(
                 controller: _nlCtrl,
@@ -255,11 +382,26 @@ class _AddBillPageState extends State<AddBillPage>
                   hintText: '例如：今天午饭花了25，打车回来12，还买了杯奶茶15',
                   filled: true,
                   fillColor: const Color(0xFFF8F9FB),
+                  suffixIcon: _micButton(),
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none),
                 ),
               ),
+              if (_listening) ...[
+                const SizedBox(height: 8),
+                Row(children: [
+                  const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('正在聆听，请说出消费内容…',
+                      style: TextStyle(
+                          fontSize: 12, color: Theme.of(context).colorScheme.primary)),
+                ]),
+              ],
               const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
@@ -293,6 +435,76 @@ class _AddBillPageState extends State<AddBillPage>
           ),
         ],
       );
+
+  /// 语音输入按钮：说话转文字后填入输入框，再由用户点击 AI 解析
+  Widget _micButton() => IconButton(
+        icon: Icon(
+          _listening ? Icons.mic : Icons.mic_none,
+          color: _listening ? Colors.red : Colors.grey,
+        ),
+        tooltip: '语音输入',
+        onPressed: _toggleVoice,
+      );
+
+  Future<void> _toggleVoice() async {
+    if (_listening) {
+      await _speech.stop();
+      setState(() => _listening = false);
+      return;
+    }
+    try {
+      _speechReady = _speechReady ||
+          await _speech.initialize(
+            onError: (e) {
+              // 不再吞错误：识别服务缺失/不支持时会在此暴露真实原因
+              if (mounted) {
+                setState(() => _listening = false);
+                if (e.errorMsg != 'error_no_match' || _nlCtrl.text.isEmpty) {
+                  _toast('语音识别出错（${e.errorMsg}）。'
+                      '如果反复出现，说明设备缺少语音识别服务，'
+                      '可以用输入法自带的语音键说话代替');
+                }
+              }
+            },
+            onStatus: (status) {
+              if (status == 'done' || status == 'notListening') {
+                if (mounted) setState(() => _listening = false);
+              }
+            },
+          );
+      if (!_speechReady) {
+        _toast('当前设备不支持语音识别，可以用输入法自带的语音键代替');
+        return;
+      }
+      // 优先中文识别；设备语音服务不支持 zh 时改用设备默认语言
+      String? localeId;
+      try {
+        final locales = await _speech.locales();
+        final hasZh = locales.any((l) => l.localeId.toLowerCase().startsWith('zh'));
+        if (hasZh) localeId = 'zh_CN';
+      } catch (_) {}
+      setState(() => _listening = true);
+      await _speech.listen(
+        listenOptions: SpeechListenOptions(
+          cancelOnError: false,
+          partialResults: true,
+          listenMode: ListenMode.dictation,
+          localeId: localeId,
+          onDevice: false,
+        ),
+        onResult: (result) {
+          if (mounted && result.recognizedWords.isNotEmpty) {
+            setState(() => _nlCtrl.text = result.recognizedWords);
+          }
+        },
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _listening = false);
+        _toast('无法启动语音识别：请检查麦克风权限（$e）');
+      }
+    }
+  }
 
   Future<void> _aiParse() async {
     final input = _nlCtrl.text.trim();
@@ -341,8 +553,8 @@ class _AddBillPageState extends State<AddBillPage>
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               ]),
               const SizedBox(height: 10),
-              const Text('拍摄或选择购物小票照片，自动识别文字并提取消费条目：',
-                  style: TextStyle(fontSize: 13, color: Colors.black54)),
+              Text('拍摄或选择购物小票照片，自动识别文字并提取消费条目：',
+                  style: TextStyle(fontSize: 13, color: context.subtext)),
               const SizedBox(height: 12),
               Row(children: [
                 Expanded(
@@ -365,11 +577,11 @@ class _AddBillPageState extends State<AddBillPage>
                 const SizedBox(height: 14),
                 const LinearProgressIndicator(),
                 const SizedBox(height: 8),
-                const Text('正在识别小票并交给 AI 解析…',
-                    style: TextStyle(fontSize: 12, color: Colors.black54)),
+                Text('正在识别小票并交给 AI 解析…',
+                    style: TextStyle(fontSize: 12, color: context.subtext)),
               ],
               if (_ocrText != null) ...[
-                const SizedBox(height: 12),
+                SizedBox(height: 12),
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(10),
@@ -380,8 +592,8 @@ class _AddBillPageState extends State<AddBillPage>
                   child: Text(_ocrText!,
                       maxLines: 8,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 12, color: Colors.black45, height: 1.4)),
+                      style: TextStyle(
+                          fontSize: 12, color: context.subtext, height: 1.4)),
                 ),
               ],
             ],
@@ -490,7 +702,7 @@ class _AddBillPageState extends State<AddBillPage>
   Widget _card(Widget child) => Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.card,
           borderRadius: BorderRadius.circular(14),
         ),
         child: child,

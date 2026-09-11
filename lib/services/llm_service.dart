@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/bill.dart';
 import '../models/budget.dart';
+import 'local_stores.dart';
 import 'settings_service.dart';
 
 /// LLM 服务封装
@@ -105,6 +106,8 @@ class NlBillParser {
   /// 输入口语化文本（可含多条消费），返回结构化账单列表
   static Future<List<Bill>> parse(String input) async {
     final now = DateTime.now();
+    // 用户过往的分类纠正记录作为 few-shot 参考，越用越准
+    final correctionHints = await CorrectionStore.hints();
     final system = '你是记账助手。用户会给出口语化的收支描述，'
         '你需要拆分出每一条收支记录。'
         '今天日期：${now.year}-${_p(now.month)}-${_p(now.day)} '
@@ -115,7 +118,8 @@ class NlBillParser {
         '{"money":金额数字,"type":0,"category":"分类","remark":"不超过12字的备注"}。'
         '示例：输入"晚饭32，奶茶15"输出'
         '[{"money":32,"type":0,"category":"餐饮","remark":"晚饭"},'
-        '{"money":15,"type":0,"category":"餐饮","remark":"奶茶"}]';
+        '{"money":15,"type":0,"category":"餐饮","remark":"奶茶"}]'
+        '$correctionHints';
 
     final text = await LlmService.chat(input, system: system);
     final json = LlmService.extractJson(text);
@@ -188,9 +192,10 @@ class ReceiptParser {
   static String _p(int n) => n.toString().padLeft(2, '0');
 }
 
-/// 月度 AI 分析：消费总结 + 省钱建议 + 下月预算规划
+/// AI 账单分析：消费总结 + 省钱建议 + 预算规划（支持月度 / 年度）
 class MonthlyAnalyzer {
   /// 返回 (总结报告 Markdown 文本, AI 建议的分类预算)
+  /// [yearly] 为 true 时生成年度报告（不输出下月预算 JSON）
   static Future<(String, Map<String, double>)> analyze({
     required String month,
     required List<Bill> bills,
@@ -198,8 +203,10 @@ class MonthlyAnalyzer {
     required double monthIncome,
     required Map<String, double> categorySpend,
     required Budget? currentBudget,
+    bool yearly = false,
   }) async {
-    // 把整月账单明细拼成文本（核心 Token 消耗点）
+    final periodLabel = yearly ? '年度' : '月度';
+    // 把整期账单明细拼成文本（核心 Token 消耗点）
     final lines = <String>[];
     for (final b in bills) {
       final t = b.isExpense ? '支出' : '收入';
@@ -212,38 +219,44 @@ class MonthlyAnalyzer {
         ? '本月未设置预算'
         : '总预算${currentBudget.totalBudget}元，分类预算${currentBudget.cateBudget}';
 
+    final planInstruction = yearly
+        ? '''第二部分以「# 明年消费展望」为标题，基于全年消费趋势给出明年整体消费建议（2-3句）。'''
+        : '''第二部分以「# 下月预算规划」为标题，说明规划思路（1-2句）。
+第三部分只输出一个 JSON 代码块（不要有其他文字），内容为下月各分类建议预算，格式：
+{"餐饮":数字,"交通":数字,"购物":数字,"娱乐":数字,"其他":数字}
+金额必须参考本月实际消费，合理收紧。''';
+
     final prompt = '''
 以下是用户 $month 的全部账单明细（时间 | 类型 | 分类 | 金额 | 备注）：
 ${lines.join('\n')}
 
-统计信息：总支出 $monthExpense 元，总收入 $monthIncome 元。
+统计信息：$periodLabel总支出 $monthExpense 元，总收入 $monthIncome 元。
 分类支出汇总：$cateLine。
 用户设置的预算：$budgetLine。
 
-请你作为个人理财分析师完成三部分，并严格按以下格式输出：
-第一部分以「# 本月消费报告」为标题，用 Markdown 写：
-1. 本月整体收支评价（2-3句）
+请你作为个人理财分析师完成以下部分，并严格按格式输出：
+第一部分以「# $periodLabel消费报告」为标题，用 Markdown 写：
+1. 本$periodLabel整体收支评价（2-3句）
 2. 消费结构分析：哪些分类占比最高、是否有单笔大额或不合理消费（列出具体例子）
 3. 3-5 条个性化省钱建议，要引用上面账单里的真实数据
-第二部分以「# 下月预算规划」为标题，说明规划思路（1-2句）。
-第三部分只输出一个 JSON 代码块（不要有其他文字），内容为下月各分类建议预算，格式：
-{"餐饮":数字,"交通":数字,"购物":数字,"娱乐":数字,"其他":数字}
-金额必须参考本月实际消费，合理收紧。''';
+$planInstruction''';
 
     final text = await LlmService.chat(prompt, temperature: 0.5);
     var report = text;
     var plan = <String, double>{};
 
-    // 从回复里拆出 JSON 预算部分
-    final jsonMatch =
-        RegExp(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```').firstMatch(text);
-    if (jsonMatch != null) {
-      try {
-        final m = jsonDecode(jsonMatch.group(1)!) as Map<String, dynamic>;
-        plan = m.map((k, v) => MapEntry(k, (v as num).toDouble()));
-        // 从报告中移除 JSON 块，避免正文出现裸 JSON
-        report = text.replaceRange(jsonMatch.start, jsonMatch.end, '').trim();
-      } catch (_) {}
+    if (!yearly) {
+      // 从回复里拆出 JSON 预算部分
+      final jsonMatch =
+          RegExp(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```').firstMatch(text);
+      if (jsonMatch != null) {
+        try {
+          final m = jsonDecode(jsonMatch.group(1)!) as Map<String, dynamic>;
+          plan = m.map((k, v) => MapEntry(k, (v as num).toDouble()));
+          // 从报告中移除 JSON 块，避免正文出现裸 JSON
+          report = text.replaceRange(jsonMatch.start, jsonMatch.end, '').trim();
+        } catch (_) {}
+      }
     }
     return (report, plan);
   }

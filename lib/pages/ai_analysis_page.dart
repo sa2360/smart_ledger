@@ -3,6 +3,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../common/global.dart';
 import '../db/database_helper.dart';
+import '../models/bill.dart';
 import '../models/budget.dart';
 import '../services/llm_service.dart';
 import '../services/settings_service.dart';
@@ -27,6 +28,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
   List<(String, double, double)> _trend = [];
   double _expense = 0, _income = 0;
   String _month = '';
+  int _reportMode = 0; // 0 月度报告 / 1 年度报告
 
   @override
   void initState() {
@@ -81,21 +83,34 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
     setState(() => _loading = true);
     try {
       final now = DateTime.now();
-      final month = '${now.year}-${_p(now.month)}';
-      final bills = await DatabaseHelper.instance.queryBills(month: month);
-      final budget =
-          await DatabaseHelper.instance.getBudget(month);
+      final yearly = _reportMode == 1;
+      final List<Bill> bills;
+      if (yearly) {
+        // 全年账单（month 参数为前缀匹配）
+        bills = await DatabaseHelper.instance.queryBills(month: '${now.year}');
+      } else {
+        bills =
+            await DatabaseHelper.instance.queryBills(month: '${now.year}-${_p(now.month)}');
+      }
       if (bills.isEmpty) {
-        _toast('本月还没有账单记录，先记几笔再来分析吧');
+        _toast(yearly ? '今年还没有账单记录' : '本月还没有账单记录，先记几笔再来分析吧');
         return;
       }
+      final expense =
+          bills.where((b) => b.isExpense).fold<double>(0, (s, b) => s + b.money);
+      final income = bills
+          .where((b) => !b.isExpense)
+          .fold<double>(0, (s, b) => s + b.money);
+      final budget =
+          await DatabaseHelper.instance.getBudget('${now.year}-${_p(now.month)}');
       final (report, plan) = await MonthlyAnalyzer.analyze(
-        month: month,
+        month: yearly ? '${now.year} 年度' : '${now.year}-${_p(now.month)}',
         bills: bills,
-        monthExpense: _expense,
-        monthIncome: _income,
+        monthExpense: expense,
+        monthIncome: income,
         categorySpend: _cateSpend,
         currentBudget: budget,
+        yearly: yearly,
       );
       setState(() {
         _report = report;
@@ -131,20 +146,20 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: context.bg,
       appBar: AppBar(
-        title: const Text('AI 消费分析',
+        title: Text('AI 消费分析',
             style: TextStyle(fontWeight: FontWeight.bold)),
       ),
       body: _loading
-          ? const Center(
+          ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
                   Text('AI 正在阅读你的整月账单…',
-                      style: TextStyle(color: Colors.black54)),
+                      style: TextStyle(color: context.subtext)),
                 ],
               ),
             )
@@ -181,6 +196,17 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
                   )),
                   const SizedBox(height: 12),
                 ],
+                SegmentedButton<int>(
+                  style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('月度报告')),
+                    ButtonSegment(value: 1, label: Text('年度报告')),
+                  ],
+                  selected: {_reportMode},
+                  onSelectionChanged: (s) =>
+                      setState(() => _reportMode = s.first),
+                ),
+                const SizedBox(height: 10),
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
                       backgroundColor: const Color(0xFF7E57C2),
@@ -189,7 +215,9 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
                           borderRadius: BorderRadius.circular(14))),
                   onPressed: _analyze,
                   icon: const Icon(Icons.auto_awesome),
-                  label: Text(_report == null ? '生成 AI 月度报告' : '重新生成报告',
+                  label: Text(_report == null
+                      ? (_reportMode == 0 ? '生成 AI 月度报告' : '生成 AI 年度报告')
+                      : '重新生成报告',
                       style: const TextStyle(fontSize: 16)),
                 ),
                 if (_report != null) ...[
@@ -210,7 +238,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: context.card,
             borderRadius: BorderRadius.circular(14),
           ),
           child: Row(
@@ -226,7 +254,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
                     color: Color(0xFF7E57C2), size: 22),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -236,7 +264,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
                     SizedBox(height: 2),
                     Text('直接问它：「我这个月奶茶花了多少？」',
                         style:
-                            TextStyle(fontSize: 12, color: Colors.black54)),
+                            TextStyle(fontSize: 12, color: context.subtext)),
                   ],
                 ),
               ),
@@ -341,7 +369,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
         margin: const EdgeInsets.only(top: 12),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.card,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xFF7E57C2), width: 1.2),
         ),
@@ -398,7 +426,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
   Widget _card(Widget child) => Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.card,
           borderRadius: BorderRadius.circular(14),
         ),
         child: child,

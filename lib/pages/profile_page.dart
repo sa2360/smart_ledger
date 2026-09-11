@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../common/global.dart';
+import '../services/export_service.dart';
 import '../services/llm_service.dart';
 import '../services/settings_service.dart';
 import 'recurring_page.dart';
+import 'widgets/common.dart';
 
-/// 我的页：AI 服务配置（内置模型免配置 / 自定义模型）+ 关于信息
+/// 我的页：AI 服务配置（内置模型免配置 / 自定义模型）+ 外观 + 数据管理 + 关于信息
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
@@ -21,6 +24,7 @@ class _ProfilePageState extends State<ProfilePage> {
       TextEditingController(text: SettingsService.customApiKey);
   bool _obscure = true;
   bool _testing = false;
+  bool _dataBusy = false;
 
   @override
   void dispose() {
@@ -33,7 +37,7 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: context.bg,
       appBar: AppBar(
         title: const Text('我的', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
@@ -43,7 +47,7 @@ class _ProfilePageState extends State<ProfilePage> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: context.card,
               borderRadius: BorderRadius.circular(14),
             ),
             child: Column(
@@ -95,6 +99,10 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
           const SizedBox(height: 14),
+          _appearanceCard(),
+          const SizedBox(height: 14),
+          _dataCard(),
+          const SizedBox(height: 14),
           InkWell(
             onTap: () => Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const RecurringPage())),
@@ -102,10 +110,10 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: context.card,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Row(
+              child: Row(
                 children: [
                   Icon(Icons.event_repeat,
                       size: 20, color: Color(0xFF1E88E5)),
@@ -120,7 +128,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         SizedBox(height: 2),
                         Text('房租、订阅等固定收支，到期自动入账',
                             style:
-                                TextStyle(fontSize: 12, color: Colors.black54)),
+                                TextStyle(fontSize: 12, color: context.subtext)),
                       ],
                     ),
                   ),
@@ -133,7 +141,7 @@ class _ProfilePageState extends State<ProfilePage> {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: context.card,
               borderRadius: BorderRadius.circular(14),
             ),
             child: const Column(
@@ -171,6 +179,166 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
     );
   }
+
+  /// 外观设置卡片：深色模式
+  Widget _appearanceCard() => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: context.card,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(children: [
+              Icon(Icons.dark_mode, size: 18, color: Color(0xFF1E88E5)),
+              SizedBox(width: 6),
+              Text('外观',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            ]),
+            const SizedBox(height: 10),
+            SegmentedButton<ThemeMode>(
+              segments: const [
+                ButtonSegment(value: ThemeMode.system, label: Text('跟随系统')),
+                ButtonSegment(value: ThemeMode.light, label: Text('浅色')),
+                ButtonSegment(value: ThemeMode.dark, label: Text('深色')),
+              ],
+              selected: {SettingsService.themeMode},
+              onSelectionChanged: (s) => SettingsService.themeMode = s.first,
+            ),
+          ],
+        ),
+      );
+
+  /// 数据管理卡片：导出 CSV / 备份 / 恢复
+  Widget _dataCard() => Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: context.card,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          children: [
+            _dataTile(
+              icon: Icons.table_view,
+              title: '导出账单 CSV',
+              subtitle: '生成表格文件，可发送到电脑用 Excel 查看',
+              onTap: _busyGuard(() async {
+                await ExportService.exportCsv();
+                _toast('已生成 CSV，请在弹出的分享面板中选择保存位置');
+              }),
+            ),
+            Divider(height: 1, color: context.divider),
+            _dataTile(
+              icon: Icons.backup,
+              title: '备份数据',
+              subtitle: '账单 + 预算 + 周期配置打包为 JSON 文件',
+              onTap: _busyGuard(() async {
+                await ExportService.exportBackup();
+                _toast('备份已生成，请在分享面板中保存');
+              }),
+            ),
+            Divider(height: 1, color: context.divider),
+            _dataTile(
+              icon: Icons.restore,
+              title: '恢复备份',
+              subtitle: '选择备份 JSON 文件，将覆盖当前全部数据',
+              onTap: _busyGuard(_restoreFlow),
+            ),
+          ],
+        ),
+      );
+
+  VoidCallback _busyGuard(Future<void> Function() action) => () async {
+        if (_dataBusy) return;
+        setState(() => _dataBusy = true);
+        try {
+          await action();
+        } on Exception catch (e) {
+          _toast(_friendlyError(e));
+        } finally {
+          if (mounted) setState(() => _dataBusy = false);
+        }
+      };
+
+  String _friendlyError(Exception e) {
+    final msg = e.toString();
+    if (msg.contains('FormatException')) {
+      final inner = msg.contains('FormatException: ')
+          ? msg.split('FormatException: ').last
+          : '文件格式不正确';
+      return inner;
+    }
+    if (msg.contains('permission') || msg.contains('Permission')) {
+      return '没有文件访问权限，请检查系统权限设置';
+    }
+    return '操作失败：$msg';
+  }
+
+  Future<void> _restoreFlow() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('恢复备份'),
+        content: const Text('将从备份文件恢复账单、预算和周期配置，'
+            '并清空当前全部数据。此操作不可撤销，确定继续吗？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('继续')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final count = await ExportService.restoreBackup();
+    if (count < 0) {
+      _toast('已取消选择文件');
+      return;
+    }
+    notifyDataChanged();
+    _toast('恢复完成，共导入 $count 条账单');
+  }
+
+  Widget _dataTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) =>
+      InkWell(
+        onTap: _dataBusy ? null : onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+          child: Row(children: [
+            Icon(icon, size: 20, color: const Color(0xFF1E88E5)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style:
+                          TextStyle(fontSize: 11.5, color: context.subtext)),
+                ],
+              ),
+            ),
+            if (_dataBusy)
+              const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+          ]),
+        ),
+      );
 
   Widget _statusChip() {
     final custom = SettingsService.useCustom;

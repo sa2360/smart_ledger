@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// AI 服务配置（双模式）：
@@ -78,4 +79,22 @@ class SettingsService {
   /// 配置变化信号（模式切换 / 自定义保存后通知各页面刷新状态）
   static final ValueNotifier<int> _version = ValueNotifier(0);
   static ValueListenable<int> get configListenable => _version;
+
+  // -------- 外观（深色模式） --------
+
+  static ThemeMode get themeMode => switch (_prefs.getString('theme_mode')) {
+        'light' => ThemeMode.light,
+        'dark' => ThemeMode.dark,
+        _ => ThemeMode.system,
+      };
+
+  static set themeMode(ThemeMode v) {
+    _prefs.setString('theme_mode', v.name);
+    _themeModeNotifier.value = v;
+  }
+
+  static final ValueNotifier<ThemeMode> _themeModeNotifier =
+      ValueNotifier(themeMode);
+  static ValueListenable<ThemeMode> get themeModeListenable =>
+      _themeModeNotifier;
 }

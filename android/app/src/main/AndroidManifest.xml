@@ -1,6 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 调用 Agnes LLM API 需要联网 -->
+    <!-- 调用 AI 服务需要联网；语音记账需要麦克风 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService"/>
+        </intent>
+    </queries>
     <application
         android:label="一语记"
         android:name="${applicationName}"

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../common/global.dart';
 import '../db/database_helper.dart';
 import '../models/bill.dart';
 import '../models/budget.dart';
+import '../services/llm_service.dart';
 import '../services/recurring_service.dart';
 import 'bill_edit_page.dart';
+import 'search_page.dart';
 import 'widgets/common.dart';
 
 /// 首页：本月/今日收支统计 + 预算进度 + 账单列表（按日分组）
@@ -22,6 +25,11 @@ class _HomePageState extends State<HomePage> {
   double _monthExpense = 0, _monthIncome = 0, _todayExpense = 0;
   Budget? _budget;
   final List<Bill> _bills = [];
+
+  // AI 周度预警：本周支出 / 近四周平均，> 平均 1.5 倍时提示
+  bool _weekAlert = false;
+  double _weekSpend = 0, _weekAvg = 0;
+  String _weekKey = '';
 
   static String _p(int n) => n.toString().padLeft(2, '0');
   static String monthStr(DateTime d) => '${d.year}-${_p(d.month)}';
@@ -69,7 +77,163 @@ class _HomePageState extends State<HomePage> {
         ..addAll(results[4] as List<Bill>);
       _loading = false;
     });
+    _checkWeeklyAlert();
   }
+
+  /// AI 周度预警：本周支出超过近四周平均的 1.5 倍时提示
+  Future<void> _checkWeeklyAlert() async {
+    final db = DatabaseHelper.instance;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final weekStart = today.subtract(Duration(days: today.weekday - 1));
+    final thisWeek = await db.sumBetween(weekStart, now);
+    if (thisWeek <= 0) return;
+
+    var prevSum = 0.0;
+    var prevWeeks = 0;
+    for (var i = 1; i <= 4; i++) {
+      final s = weekStart.subtract(Duration(days: 7 * i));
+      final e = s.add(const Duration(days: 6));
+      // 未来周（月初安装等情况）不计入平均
+      if (e.isAfter(today)) continue;
+      final v = await db.sumBetween(s, e);
+      prevSum += v;
+      prevWeeks++;
+    }
+    if (prevWeeks == 0) return;
+    final avg = prevSum / prevWeeks;
+    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    final dismissed = prefs.getString('alert_dismissed_week') == _weekKeyOf(weekStart);
+    setState(() {
+      _weekSpend = thisWeek;
+      _weekAvg = avg;
+      _weekKey = _weekKeyOf(weekStart);
+      _weekAlert = avg > 0 && thisWeek > avg * 1.5 && !dismissed;
+    });
+  }
+
+  static String _weekKeyOf(DateTime weekStart) =>
+      '${weekStart.year}-${_p(weekStart.month)}-${_p(weekStart.day)}';
+
+  /// 弹出 AI 对本周消费的简评（每周只请求一次，结果缓存）
+  Future<void> _showWeeklyAiComment() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString('alert_comment_$_weekKey');
+    if (cached != null) {
+      if (mounted) _showCommentDialog(cached);
+      return;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('AI 正在分析本周消费…'), behavior: SnackBarBehavior.floating));
+    try {
+      final weekStart = DateTime.tryParse(_weekKey)!;
+      final bills = (await DatabaseHelper.instance
+              .queryBills(month: monthStr(DateTime.now())))
+          .where((b) {
+        final d = DateTime.tryParse(b.createTime);
+        return d != null && !d.isBefore(weekStart) && b.isExpense;
+      }).toList();
+      final lines = [
+        for (final b in bills.take(100))
+          '${b.createTime.substring(5, 10)} ${b.category} ${b.money.toStringAsFixed(2)}元 ${b.remark}',
+      ];
+      final reply = await LlmService.chat(
+        '用户本周（周${'一二三四五六日'[DateTime.now().weekday - 1]}）已支出 '
+        '${_weekSpend.toStringAsFixed(2)} 元，此前四周平均每周 ${_weekAvg.toStringAsFixed(2)} 元，'
+        '消费速度偏快。本周账单：\n${lines.join('\n')}\n'
+        '请用不超过 100 字指出本周消费的主要问题，并给 1-2 条立刻可执行的建议。',
+        system: '你是记账 App 的消费提醒助手，回答简洁、口语化、给出具体可执行建议。',
+        temperature: 0.4,
+      );
+      await prefs.setString('alert_comment_$_weekKey', reply);
+      if (mounted) _showCommentDialog(reply);
+    } on LlmException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(e.message), behavior: SnackBarBehavior.floating));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('分析失败：$e'), behavior: SnackBarBehavior.floating));
+      }
+    }
+  }
+
+  void _showCommentDialog(String text) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Row(children: [
+          Icon(Icons.insights, color: Color(0xFFEF6C00)),
+          SizedBox(width: 8),
+          Text('本周消费简评'),
+        ]),
+        content: SelectableText(text, style: const TextStyle(height: 1.6)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context), child: const Text('知道了')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _dismissAlert() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('alert_dismissed_week', _weekKey);
+    setState(() => _weekAlert = false);
+  }
+
+  /// AI 周度预警横幅
+  Widget _weeklyAlertBanner() => Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF3E0),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFFFB74D)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: Color(0xFFEF6C00), size: 20),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '本周已支出 ¥${_weekSpend.toStringAsFixed(2)}，'
+                  '超过近四周平均（¥${_weekAvg.toStringAsFixed(2)}）的 50%',
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFE65100)),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 6),
+            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFEF6C00),
+                    visualDensity: VisualDensity.compact),
+                onPressed: _showWeeklyAiComment,
+                icon: const Icon(Icons.auto_awesome, size: 16),
+                label: const Text('AI 分析一下', style: TextStyle(fontSize: 13)),
+              ),
+              const SizedBox(width: 4),
+              TextButton(
+                style: TextButton.styleFrom(
+                    foregroundColor: Colors.grey,
+                    visualDensity: VisualDensity.compact),
+                onPressed: _dismissAlert,
+                child: const Text('知道了', style: TextStyle(fontSize: 13)),
+              ),
+            ]),
+          ],
+        ),
+      );
 
   /// 按日期分组，返回 (日期, 当日支出小计, 该日账单) 列表
   List<(String, double, List<Bill>)> get _groups {
@@ -97,12 +261,18 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: context.bg,
       appBar: AppBar(
         title: const Text('一语记',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
         centerTitle: false,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: '搜索账单',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const SearchPage())),
+          ),
           SegmentedButton<int>(
             style: const ButtonStyle(visualDensity: VisualDensity.compact),
             segments: const [
@@ -126,6 +296,10 @@ class _HomePageState extends State<HomePage> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
                 children: [
+                  if (_weekAlert) ...[
+                    _weeklyAlertBanner(),
+                    const SizedBox(height: 12),
+                  ],
                   Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
@@ -247,7 +421,7 @@ class _HomePageState extends State<HomePage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.card,
         borderRadius: BorderRadius.circular(12),
       ),
       clipBehavior: Clip.antiAlias,
