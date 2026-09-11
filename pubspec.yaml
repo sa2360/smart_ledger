@@ -1,0 +1,29 @@
+name: smart_ledger
+description: "智能收支记账 App：自然语言 AI 记账 + 小票 OCR + 月度 AI 分析 + 预算管理"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  sqflite: ^2.4.1              # 本地 SQLite 数据库
+  path: ^1.9.0
+  http: ^1.2.2                 # 调用 Agnes LLM API
+  shared_preferences: ^2.3.4   # 保存 API Key 等设置
+  image_picker: ^1.1.2         # 拍照 / 相册选取小票
+  google_mlkit_text_recognition: ^0.15.0  # 端上离线 OCR（中文）
+  fl_chart: ^0.70.2            # 分类支出饼图
+  flutter_markdown_plus: ^1.0.3  # 渲染 AI 月度报告
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  sqflite_common_ffi: ^2.3.3   # 桌面端跑 SQLite 单元测试
+
+flutter:
+  uses-material-design: true
