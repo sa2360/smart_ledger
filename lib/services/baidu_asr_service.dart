@@ -4,18 +4,64 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 百度短语音识别（REST API）
-/// 录音文件（16kHz/16bit/单声道 PCM）上传识别，≤60 秒
-/// Key 在构建时通过 --dart-define 注入，仅保存在安装包内
+/// 语音识别服务（双模式）
+///  - 中转模式（推荐）：ASR_RELAY_URL 指向自建中转服务，Key 保存在服务端，APK 不含任何 Key
+///  - 直连模式：构建时注入 BAIDU_API_KEY / BAIDU_SECRET_KEY，App 直接调百度
 class BaiduAsrService {
   BaiduAsrService._();
+
+  /// 中转服务地址（如 https://xxx.domcloud.co），非空时走中转
+  static const String relayUrl =
+      String.fromEnvironment('ASR_RELAY_URL', defaultValue: '');
 
   static const String apiKey =
       String.fromEnvironment('BAIDU_API_KEY', defaultValue: '');
   static const String secretKey =
       String.fromEnvironment('BAIDU_SECRET_KEY', defaultValue: '');
 
-  static bool get isConfigured => apiKey.isNotEmpty && secretKey.isNotEmpty;
+  static bool get useRelay => relayUrl.isNotEmpty;
+
+  static bool get isConfigured =>
+      useRelay || (apiKey.isNotEmpty && secretKey.isNotEmpty);
+
+  /// 设备标识（中转服务用于限流）
+  static Future<String> _cuid() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString('baidu_cuid');
+    if (existing != null && existing.isNotEmpty) return existing;
+    final cuid = 'yiyuji_${DateTime.now().millisecondsSinceEpoch}';
+    await prefs.setString('baidu_cuid', cuid);
+    return cuid;
+  }
+
+  /// 通过中转服务识别（服务端持有百度 Key）
+  static Future<String> _recognizeViaRelay(String path, int len) async {
+    final audio = await File(path).readAsBytes();
+    final cuid = await _cuid();
+    final resp = await http
+        .post(
+          Uri.parse('$relayUrl/asr'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'speech': base64Encode(audio),
+            'len': len,
+            'cuid': cuid,
+          }),
+        )
+        .timeout(const Duration(seconds: 40));
+    final data = jsonDecode(utf8.decode(resp.bodyBytes));
+    final errNo = data['err_no'];
+    if (errNo != 0) {
+      if (errNo is int && errNo < 0 && data['err_msg'] == null) {
+        // 中转层自身的错误（限流/配置缺失）
+        throw AsrException('${data['error'] ?? '中转服务异常（$errNo）'}');
+      }
+      throw AsrException(_errText((errNo ?? -1) as int, '${data['err_msg'] ?? ''}'));
+    }
+    final result = data['result'];
+    if (result is! List || result.isEmpty) return '';
+    return (result.first as String).replaceAll(RegExp(r'[，,]+\s*$'), '').trim();
+  }
 
   /// 获取 access_token（有效期约 30 天，缓存到本地）
   static Future<String> _token() async {
@@ -49,6 +95,13 @@ class BaiduAsrService {
     if (audio.length > 10 * 1024 * 1024) {
       throw AsrException('录音过长，请控制在 60 秒以内');
     }
+
+    // 中转模式：Key 在服务端
+    if (useRelay) {
+      return _recognizeViaRelay(path, audio.length);
+    }
+
+    // 直连模式
     final token = await _token();
     final prefs = await SharedPreferences.getInstance();
     final cuid = prefs.getString('baidu_cuid') ?? _newCuid(prefs);
