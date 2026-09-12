@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:speech_to_text/speech_to_text.dart';
+import 'dart:async';
+
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 
 import '../common/global.dart';
 import '../db/database_helper.dart';
 import '../models/bill.dart';
+import '../services/baidu_asr_service.dart';
 import '../services/llm_service.dart';
 import '../services/local_stores.dart';
 import '../services/settings_service.dart';
@@ -37,10 +41,12 @@ class _AddBillPageState extends State<AddBillPage>
   final _nlCtrl = TextEditingController();
   bool _nlLoading = false;
 
-  // 语音记账
-  final _speech = SpeechToText();
-  bool _speechReady = false;
-  bool _listening = false;
+  // 语音记账：录音 -> 百度短语音识别
+  final _recorder = AudioRecorder();
+  bool _listening = false; // 正在录音
+  bool _recognizing = false; // 正在识别
+  String? _pendingVoicePath;
+  Timer? _autoStopTimer;
 
   // 常用模板
   List<Map<String, dynamic>> _templates = [];
@@ -67,6 +73,7 @@ class _AddBillPageState extends State<AddBillPage>
 
   @override
   void dispose() {
+    _autoStopTimer?.cancel();
     _tab.dispose();
     _moneyCtrl.dispose();
     _remarkCtrl.dispose();
@@ -388,7 +395,7 @@ class _AddBillPageState extends State<AddBillPage>
                       borderSide: BorderSide.none),
                 ),
               ),
-              if (_listening) ...[
+              if (_listening || _recognizing) ...[
                 const SizedBox(height: 8),
                 Row(children: [
                   const SizedBox(
@@ -397,9 +404,12 @@ class _AddBillPageState extends State<AddBillPage>
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                   const SizedBox(width: 8),
-                  Text('正在聆听，请说出消费内容…',
-                      style: TextStyle(
-                          fontSize: 12, color: Theme.of(context).colorScheme.primary)),
+                  Text(
+                    _recognizing ? '识别中，请稍候…' : '正在录音，说完再点一下麦克风停止',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.primary),
+                  ),
                 ]),
               ],
               const SizedBox(height: 10),
@@ -438,70 +448,85 @@ class _AddBillPageState extends State<AddBillPage>
 
   /// 语音输入按钮：说话转文字后填入输入框，再由用户点击 AI 解析
   Widget _micButton() => IconButton(
-        icon: Icon(
-          _listening ? Icons.mic : Icons.mic_none,
-          color: _listening ? Colors.red : Colors.grey,
-        ),
+        icon: _recognizing
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : Icon(
+                _listening ? Icons.mic : Icons.mic_none,
+                color: _listening ? Colors.red : Colors.grey,
+              ),
         tooltip: '语音输入',
-        onPressed: _toggleVoice,
+        onPressed: (_listening || _recognizing) && !_listening ? null : _toggleVoice,
       );
 
+  /// 语音记账：点一下开始录音，再点一下停止并识别；最长 55 秒自动停止
   Future<void> _toggleVoice() async {
     if (_listening) {
-      await _speech.stop();
-      setState(() => _listening = false);
+      await _stopAndRecognize();
       return;
     }
     try {
-      _speechReady = _speechReady ||
-          await _speech.initialize(
-            onError: (e) {
-              // 不再吞错误：识别服务缺失/不支持时会在此暴露真实原因
-              if (mounted) {
-                setState(() => _listening = false);
-                if (e.errorMsg != 'error_no_match' || _nlCtrl.text.isEmpty) {
-                  _toast('语音识别出错（${e.errorMsg}）。'
-                      '如果反复出现，说明设备缺少语音识别服务，'
-                      '可以用输入法自带的语音键说话代替');
-                }
-              }
-            },
-            onStatus: (status) {
-              if (status == 'done' || status == 'notListening') {
-                if (mounted) setState(() => _listening = false);
-              }
-            },
-          );
-      if (!_speechReady) {
-        _toast('当前设备不支持语音识别，可以用输入法自带的语音键代替');
+      if (!await _recorder.hasPermission()) {
+        _toast('需要麦克风权限才能语音记账，请在系统设置中允许');
         return;
       }
-      // 优先中文识别；设备语音服务不支持 zh 时改用设备默认语言
-      String? localeId;
-      try {
-        final locales = await _speech.locales();
-        final hasZh = locales.any((l) => l.localeId.toLowerCase().startsWith('zh'));
-        if (hasZh) localeId = 'zh_CN';
-      } catch (_) {}
-      setState(() => _listening = true);
-      await _speech.listen(
-        listenOptions: SpeechListenOptions(
-          cancelOnError: false,
-          partialResults: true,
-          listenMode: ListenMode.dictation,
-          localeId: localeId,
-          onDevice: false,
+      if (!BaiduAsrService.isConfigured) {
+        _toast('语音服务未配置，请使用最新版安装包');
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      final path =
+          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.pcm';
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: 16000,
+          numChannels: 1,
         ),
-        onResult: (result) {
-          if (mounted && result.recognizedWords.isNotEmpty) {
-            setState(() => _nlCtrl.text = result.recognizedWords);
-          }
-        },
+        path: path,
       );
+      setState(() {
+        _listening = true;
+        _pendingVoicePath = path;
+      });
+      // 最长 55 秒自动停止识别（百度上限 60 秒）
+      _autoStopTimer = Timer(const Duration(seconds: 55), () {
+        if (_listening && mounted) _stopAndRecognize();
+      });
+    } catch (e) {
+      if (mounted) _toast('无法启动录音：请检查麦克风权限（$e）');
+    }
+  }
+
+  Future<void> _stopAndRecognize() async {
+    _autoStopTimer?.cancel();
+    final path = _pendingVoicePath;
+    setState(() {
+      _listening = false;
+      _recognizing = true;
+    });
+    try {
+      await _recorder.stop();
+      final text = await BaiduAsrService.recognizePcmFile(path!);
+      if (mounted) {
+        setState(() => _recognizing = false);
+        if (text.isEmpty) {
+          _toast('没听清，请靠近麦克风再说一次');
+        } else {
+          _nlCtrl.text = text;
+        }
+      }
+    } on AsrException catch (e) {
+      if (mounted) {
+        setState(() => _recognizing = false);
+        _toast(e.message);
+      }
     } catch (e) {
       if (mounted) {
-        setState(() => _listening = false);
-        _toast('无法启动语音识别：请检查麦克风权限（$e）');
+        setState(() => _recognizing = false);
+        _toast('识别失败：$e');
       }
     }
   }
