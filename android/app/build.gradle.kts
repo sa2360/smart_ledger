@@ -51,6 +51,11 @@ kotlin {
     }
 }
 
+dependencies {
+    // ML Kit 中文文字识别运行时库（插件只声明了 compileOnly，需在此正式引入）
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+}
+
 flutter {
     source = "../.."
 }
