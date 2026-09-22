@@ -21,26 +21,29 @@ class SmartLedgerApp extends StatelessWidget {
   const SmartLedgerApp({super.key});
 
   static ThemeData _theme(ColorScheme scheme, Color scaffoldBg) => ThemeData(
-        useMaterial3: true,
-        colorScheme: scheme,
-        scaffoldBackgroundColor: scaffoldBg,
-        appBarTheme: AppBarTheme(
-          backgroundColor: scaffoldBg,
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: false,
-        ),
-      );
+    useMaterial3: true,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: scaffoldBg,
+    appBarTheme: AppBarTheme(
+      backgroundColor: scaffoldBg,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      centerTitle: false,
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: SettingsService.themeModeListenable,
       builder: (context, mode, _) {
-        final lightScheme =
-            ColorScheme.fromSeed(seedColor: const Color(0xFF1E88E5));
+        final lightScheme = ColorScheme.fromSeed(
+          seedColor: const Color(0xFF1E88E5),
+        );
         final darkScheme = ColorScheme.fromSeed(
-            seedColor: const Color(0xFF1E88E5), brightness: Brightness.dark);
+          seedColor: const Color(0xFF1E88E5),
+          brightness: Brightness.dark,
+        );
         return MaterialApp(
           title: '一语记 · 智能收支记账',
           debugShowCheckedModeBanner: false,
@@ -79,7 +82,9 @@ class _MainPageState extends State<MainPage> {
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
           await Navigator.push(
-              context, MaterialPageRoute(builder: (_) => const AddBillPage()));
+            context,
+            MaterialPageRoute(builder: (_) => const AddBillPage()),
+          );
           notifyDataChanged();
         },
         backgroundColor: const Color(0xFF1E88E5),
@@ -90,14 +95,18 @@ class _MainPageState extends State<MainPage> {
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(),
         notchMargin: 8,
-        color: Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         child: Row(
           children: [
             _item(0, Icons.home_rounded, Icons.home_outlined, '首页'),
             _item(1, Icons.insights_rounded, Icons.insights_outlined, 'AI 分析'),
             const Spacer(),
-            _item(2, Icons.account_balance_wallet_rounded,
-                Icons.account_balance_wallet_outlined, '预算'),
+            _item(
+              2,
+              Icons.account_balance_wallet_rounded,
+              Icons.account_balance_wallet_outlined,
+              '预算',
+            ),
             _item(3, Icons.person_rounded, Icons.person_outline, '我的'),
           ],
         ),
@@ -114,17 +123,20 @@ class _MainPageState extends State<MainPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(selected ? filled : outlined,
-                size: 24,
+            Icon(
+              selected ? filled : outlined,
+              size: 24,
+              color: selected ? const Color(0xFF1E88E5) : Colors.grey.shade500,
+            ),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
                 color: selected
                     ? const Color(0xFF1E88E5)
-                    : Colors.grey.shade500),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 11,
-                    color: selected
-                        ? const Color(0xFF1E88E5)
-                        : Colors.grey.shade500)),
+                    : Colors.grey.shade500,
+              ),
+            ),
           ],
         ),
       ),

@@ -46,3 +46,12 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Private deployment and signing configuration
+.env
+.env.*
+!.env.example
+relay/*.env
+*.jks
+*.keystore
+android/key.properties

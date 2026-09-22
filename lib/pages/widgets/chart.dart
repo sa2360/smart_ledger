@@ -40,20 +40,24 @@ class CategoryPieChart extends StatelessWidget {
                           title:
                               '${(e.value / total * 100).toStringAsFixed(0)}%',
                           titleStyle: const TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                           color: colorOf(e.key),
                           radius: 34,
                         ),
                       if (entries.length > 6)
                         PieChartSectionData(
-                          value: entries.skip(6).fold<double>(0, (s, e) => s + e.value),
+                          value: entries
+                              .skip(6)
+                              .fold<double>(0, (s, e) => s + e.value),
                           title: '其他',
                           titleStyle: const TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white),
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                           color: Colors.grey.shade400,
                           radius: 34,
                         ),
@@ -71,25 +75,33 @@ class CategoryPieChart extends StatelessWidget {
                     for (final e in shown)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 3),
-                        child: Row(children: [
-                          Container(
-                            width: 9,
-                            height: 9,
-                            decoration: BoxDecoration(
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 9,
+                              height: 9,
+                              decoration: BoxDecoration(
                                 color: colorOf(e.key),
-                                shape: BoxShape.circle),
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(e.key,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                e.key,
                                 style: const TextStyle(fontSize: 12),
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                          Text('${e.value.toStringAsFixed(0)}元',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Text(
+                              '${e.value.toStringAsFixed(0)}元',
                               style: TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.grey.shade600)),
-                        ]),
+                                fontSize: 11,
+                                color: context.subtext,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                   ],
                 ),

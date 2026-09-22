@@ -13,11 +13,16 @@ class DatabaseHelper {
   DatabaseHelper._();
 
   static final DatabaseHelper instance = DatabaseHelper._();
-  static Database? _db;
+  static Future<Database>? _opening;
 
   Future<Database> get db async {
-    _db ??= await _init();
-    return _db!;
+    return _opening ??= _init();
+  }
+
+  Future<void> close() async {
+    final opening = _opening;
+    _opening = null;
+    if (opening != null) await (await opening).close();
   }
 
   Future<Database> _init() async {
@@ -25,7 +30,7 @@ class DatabaseHelper {
     final path = p.join(dir, 'smart_ledger.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE bill_table (
@@ -46,16 +51,23 @@ class DatabaseHelper {
           )
         ''');
         await db.execute(
-            'CREATE INDEX idx_bill_create_time ON bill_table(create_time)');
+          'CREATE INDEX idx_bill_create_time ON bill_table(create_time)',
+        );
         await _createRecurringTable(db);
+        await _createRestoreTable(db);
       },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
           await _createRecurringTable(db);
         }
+        if (oldV < 3) await _createRestoreTable(db);
       },
     );
   }
+
+  static Future<void> _createRestoreTable(Database db) => db.execute(
+    'CREATE TABLE restore_preferences (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)',
+  );
 
   static Future<void> _createRecurringTable(Database db) async {
     await db.execute('''
@@ -86,7 +98,7 @@ class DatabaseHelper {
     for (final b in bills) {
       batch.insert('bill_table', b.toMap());
     }
-    final res = await batch.commit(continueOnError: true);
+    final res = await batch.commit();
     return res.map((e) => e as int).toList();
   }
 
@@ -116,17 +128,23 @@ class DatabaseHelper {
       where.add('category = ?');
       args.add(category);
     }
-    final res = await d.query('bill_table',
-        where: where.isEmpty ? null : where.join(' AND '),
-        whereArgs: args.isEmpty ? null : args,
-        orderBy: 'create_time DESC, id DESC');
+    final res = await d.query(
+      'bill_table',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'create_time DESC, id DESC',
+    );
     return res.map(Bill.fromMap).toList();
   }
 
   Future<int> updateBill(Bill bill) async {
     final d = await db;
-    return d.update('bill_table', bill.toMap(),
-        where: 'id = ?', whereArgs: [bill.id]);
+    return d.update(
+      'bill_table',
+      bill.toMap(),
+      where: 'id = ?',
+      whereArgs: [bill.id],
+    );
   }
 
   Future<int> deleteBill(int id) async {
@@ -145,7 +163,11 @@ class DatabaseHelper {
   }
 
   /// 统计 [start, end] 日期区间（含端点）内某类型总金额
-  Future<double> sumBetween(DateTime start, DateTime end, {int type = 0}) async {
+  Future<double> sumBetween(
+    DateTime start,
+    DateTime end, {
+    int type = 0,
+  }) async {
     final d = await db;
     String fmt(DateTime x) =>
         '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
@@ -170,7 +192,9 @@ class DatabaseHelper {
     if (keyword != null && keyword.trim().isNotEmpty) {
       where.add('(remark LIKE ? OR category LIKE ?)');
       final kw = '%${keyword.trim()}%';
-      args..add(kw)..add(kw);
+      args
+        ..add(kw)
+        ..add(kw);
     }
     if (category != null && category.isNotEmpty) {
       where.add('category = ?');
@@ -184,11 +208,13 @@ class DatabaseHelper {
       where.add('money <= ?');
       args.add(maxMoney);
     }
-    final res = await d.query('bill_table',
-        where: where.isEmpty ? null : where.join(' AND '),
-        whereArgs: args.isEmpty ? null : args,
-        orderBy: 'create_time DESC, id DESC',
-        limit: 500);
+    final res = await d.query(
+      'bill_table',
+      where: where.isEmpty ? null : where.join(' AND '),
+      whereArgs: args.isEmpty ? null : args,
+      orderBy: 'create_time DESC, id DESC',
+      limit: 500,
+    );
     return res.map(Bill.fromMap).toList();
   }
 
@@ -211,8 +237,12 @@ class DatabaseHelper {
 
   Future<Budget?> getBudget(String month) async {
     final d = await db;
-    final res = await d
-        .query('budget_table', where: 'month = ?', whereArgs: [month], limit: 1);
+    final res = await d.query(
+      'budget_table',
+      where: 'month = ?',
+      whereArgs: [month],
+      limit: 1,
+    );
     if (res.isEmpty) return null;
     return Budget.fromMap(res.first);
   }
@@ -220,17 +250,25 @@ class DatabaseHelper {
   /// 保存预算（同一月份只保留一条）
   Future<void> saveBudget(Budget budget) async {
     final d = await db;
-    await d.delete('budget_table', where: 'month = ?', whereArgs: [budget.month]);
-    await d.insert('budget_table', budget.toMap());
+    await d.transaction((txn) async {
+      await txn.delete(
+        'budget_table',
+        where: 'month = ?',
+        whereArgs: [budget.month],
+      );
+      await txn.insert('budget_table', budget.toMap());
+    });
   }
 
   // ---------------- 周期记账 CRUD ----------------
 
   Future<List<Recurring>> queryRecurrings({bool enabledOnly = false}) async {
     final d = await db;
-    final res = await d.query('recurring_table',
-        where: enabledOnly ? 'enabled = 1' : null,
-        orderBy: 'id DESC');
+    final res = await d.query(
+      'recurring_table',
+      where: enabledOnly ? 'enabled = 1' : null,
+      orderBy: 'id DESC',
+    );
     return res.map(Recurring.fromMap).toList();
   }
 
@@ -241,8 +279,12 @@ class DatabaseHelper {
 
   Future<int> updateRecurring(Recurring r) async {
     final d = await db;
-    return d.update('recurring_table', r.toMap(),
-        where: 'id = ?', whereArgs: [r.id]);
+    return d.update(
+      'recurring_table',
+      r.toMap(),
+      where: 'id = ?',
+      whereArgs: [r.id],
+    );
   }
 
   Future<int> deleteRecurring(int id) async {
@@ -273,12 +315,10 @@ class DatabaseHelper {
   Future<List<(String, double, double)>> monthlySummaries(int count) async {
     final d = await db;
     final now = DateTime.now();
-    final months = <String>[
-      for (var i = count - 1; i >= 0; i--)
-        (now.month - i <= 0)
-            ? '${now.year - 1}-${(now.month - i + 12).toString().padLeft(2, '0')}'
-            : '${now.year}-${(now.month - i).toString().padLeft(2, '0')}'
-    ];
+    final months = List.generate(count, (i) {
+      final date = DateTime(now.year, now.month - count + i + 1);
+      return '${date.year}-${date.month.toString().padLeft(2, '0')}';
+    });
     final res = await d.rawQuery(
       'SELECT substr(create_time, 1, 7) AS m, type, SUM(money) AS s '
       'FROM bill_table GROUP BY m, type',
@@ -295,8 +335,6 @@ class DatabaseHelper {
         pair[1] = s;
       }
     }
-    return [
-      for (final m in months) (m, map[m]?[0] ?? 0, map[m]?[1] ?? 0),
-    ];
+    return [for (final m in months) (m, map[m]?[0] ?? 0, map[m]?[1] ?? 0)];
   }
 }

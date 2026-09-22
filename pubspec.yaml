@@ -1,10 +1,10 @@
 name: smart_ledger
 description: "智能收支记账 App：自然语言 AI 记账 + 小票 OCR + 月度 AI 分析 + 预算管理"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
-  sdk: ^3.9.0
+  sdk: ^3.12.0
 
 dependencies:
   flutter:

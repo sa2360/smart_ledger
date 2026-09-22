@@ -37,8 +37,10 @@ class _RecurringPageState extends State<RecurringPage> {
     return Scaffold(
       backgroundColor: context.bg,
       appBar: AppBar(
-        title: const Text('周期记账',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          '周期记账',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _edit(null),
@@ -48,34 +50,38 @@ class _RecurringPageState extends State<RecurringPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _list.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.event_repeat,
-                          size: 56, color: Colors.grey.shade400),
-                      const SizedBox(height: 12),
-                      Text('还没有周期记账项',
-                          style: TextStyle(color: Colors.grey.shade500)),
-                      const SizedBox(height: 4),
-                      Text('房租、话费、视频会员这类固定收支可以自动入账',
-                          style: TextStyle(
-                              fontSize: 12, color: Colors.grey.shade400)),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.event_repeat,
+                    size: 56,
+                    color: Colors.grey.shade400,
                   ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.all(12),
-                  children: [
-                    for (final r in _list) _item(r),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: Text('到期后 App 启动时会自动记入账单',
-                          style: TextStyle(
-                              fontSize: 11, color: Colors.grey.shade500)),
-                    ),
-                  ],
+                  const SizedBox(height: 12),
+                  Text('还没有周期记账项', style: TextStyle(color: context.subtext)),
+                  const SizedBox(height: 4),
+                  Text(
+                    '房租、话费、视频会员这类固定收支可以自动入账',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                  ),
+                ],
+              ),
+            )
+          : ListView(
+              padding: const EdgeInsets.all(12),
+              children: [
+                for (final r in _list) _item(r),
+                const SizedBox(height: 8),
+                Center(
+                  child: Text(
+                    '到期后 App 启动时会自动记入账单',
+                    style: TextStyle(fontSize: 11, color: context.subtext),
+                  ),
                 ),
+              ],
+            ),
     );
   }
 
@@ -97,25 +103,33 @@ class _RecurringPageState extends State<RecurringPage> {
                 children: [
                   CircleAvatar(
                     radius: 20,
-                    backgroundColor:
-                        colorOf(r.category).withValues(alpha: .18),
-                    child: Icon(iconOf(r.category),
-                        size: 22, color: colorOf(r.category)),
+                    backgroundColor: colorOf(r.category).withValues(alpha: .18),
+                    child: Icon(
+                      iconOf(r.category),
+                      size: 22,
+                      color: colorOf(r.category),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(r.remark.isEmpty ? r.category : r.remark,
-                            style: const TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w600)),
+                        Text(
+                          r.remark.isEmpty ? r.category : r.remark,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         const SizedBox(height: 2),
                         Text(
                           '${r.cycleLabel} · ${r.isExpense ? "支出" : "收入"}'
                           ' · 上次执行：${r.lastRun.isEmpty ? "未执行" : r.lastRun}',
                           style: TextStyle(
-                              fontSize: 12, color: Colors.grey.shade600),
+                            fontSize: 12,
+                            color: context.subtext,
+                          ),
                         ),
                       ],
                     ),
@@ -123,17 +137,21 @@ class _RecurringPageState extends State<RecurringPage> {
                   Text(
                     '${r.isExpense ? "-" : "+"}¥${r.money.toStringAsFixed(2)}',
                     style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: r.isExpense ? Colors.black87 : const Color(0xFF26A69A)),
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: r.isExpense
+                          ? context.onSurface
+                          : const Color(0xFF26A69A),
+                    ),
                   ),
                   const SizedBox(width: 6),
                   Switch(
                     value: r.enabled == 1,
                     activeThumbColor: const Color(0xFF1E88E5),
                     onChanged: (v) async {
-                      await DatabaseHelper.instance
-                          .updateRecurring(r.copyWith(enabled: v ? 1 : 0));
+                      await DatabaseHelper.instance.updateRecurring(
+                        r.copyWith(enabled: v ? 1 : 0),
+                      );
                       notifyDataChanged();
                       _load();
                     },
@@ -152,10 +170,10 @@ class _RecurringPageState extends State<RecurringPage> {
   }
 
   Future<void> _edit(Recurring? r) async {
-    final moneyCtrl =
-        TextEditingController(text: r == null ? '' : r.money.toStringAsFixed(2));
-    final remarkCtrl =
-        TextEditingController(text: r == null ? '' : r.remark);
+    final moneyCtrl = TextEditingController(
+      text: r == null ? '' : r.money.toStringAsFixed(2),
+    );
+    final remarkCtrl = TextEditingController(text: r == null ? '' : r.remark);
     var isExpense = r?.isExpense ?? true;
     var category = r?.category ?? '餐饮';
     var cycle = r?.cycle ?? 'monthly';
@@ -182,37 +200,47 @@ class _RecurringPageState extends State<RecurringPage> {
                   selected: {isExpense},
                   onSelectionChanged: (s) => setDialogState(() {
                     isExpense = s.first;
-                    category = isExpense ? expenseCates.first : incomeCates.first;
+                    category = isExpense
+                        ? expenseCates.first
+                        : incomeCates.first;
                   }),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: moneyCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(
-                      labelText: '金额（元）', prefixText: '¥ '),
+                    labelText: '金额（元）',
+                    prefixText: '¥ ',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: remarkCtrl,
                   decoration: const InputDecoration(
-                      labelText: '备注', hintText: '如：房租 / 视频会员'),
+                    labelText: '备注',
+                    hintText: '如：房租 / 视频会员',
+                  ),
                 ),
                 const SizedBox(height: 12),
-                Text('分类',
-                    style: TextStyle(fontSize: 13, color: context.subtext)),
+                Text(
+                  '分类',
+                  style: TextStyle(fontSize: 13, color: context.subtext),
+                ),
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
                   runSpacing: 6,
                   children: (isExpense ? expenseCates : incomeCates)
-                      .map((c) => ChoiceChip(
-                            label: Text(c),
-                            selected: category == c,
-                            onSelected: (_) =>
-                                setDialogState(() => category = c),
-                          ))
+                      .map(
+                        (c) => ChoiceChip(
+                          label: Text(c),
+                          selected: category == c,
+                          onSelected: (_) => setDialogState(() => category = c),
+                        ),
+                      )
                       .toList(),
                 ),
                 const SizedBox(height: 12),
@@ -224,21 +252,30 @@ class _RecurringPageState extends State<RecurringPage> {
                     DropdownMenuItem(value: 'weekly', child: Text('每周')),
                     DropdownMenuItem(value: 'monthly', child: Text('每月')),
                   ],
-                  onChanged: (v) => setDialogState(() => cycle = v ?? 'monthly'),
+                  onChanged: (v) => setDialogState(() {
+                    cycle = v ?? 'monthly';
+                    day = cycle == 'weekly'
+                        ? day.clamp(1, 7)
+                        : day.clamp(1, 28);
+                  }),
                 ),
                 if (cycle == 'weekly') ...[
                   const SizedBox(height: 12),
-                  Text('星期',
-                      style: TextStyle(fontSize: 13, color: context.subtext)),
+                  Text(
+                    '星期',
+                    style: TextStyle(fontSize: 13, color: context.subtext),
+                  ),
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 6,
                     children: List.generate(7, (i) => i + 1)
-                        .map((d) => ChoiceChip(
-                              label: Text('周${'一二三四五六日'[d - 1]}'),
-                              selected: day == d,
-                              onSelected: (_) => setDialogState(() => day = d),
-                            ))
+                        .map(
+                          (d) => ChoiceChip(
+                            label: Text('周${'一二三四五六日'[d - 1]}'),
+                            selected: day == d,
+                            onSelected: (_) => setDialogState(() => day = d),
+                          ),
+                        )
                         .toList(),
                   ),
                 ],
@@ -246,11 +283,12 @@ class _RecurringPageState extends State<RecurringPage> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
                     initialValue: day.clamp(1, 28),
-                    decoration:
-                        const InputDecoration(labelText: '每月几号（1-28）'),
+                    decoration: const InputDecoration(labelText: '每月几号（1-28）'),
                     items: List.generate(28, (i) => i + 1)
-                        .map((d) => DropdownMenuItem(
-                            value: d, child: Text('$d 日')))
+                        .map(
+                          (d) =>
+                              DropdownMenuItem(value: d, child: Text('$d 日')),
+                        )
                         .toList(),
                     onChanged: (v) => setDialogState(() => day = v ?? 1),
                   ),
@@ -260,11 +298,13 @@ class _RecurringPageState extends State<RecurringPage> {
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消')),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
             FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('保存')),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('保存'),
+            ),
           ],
         ),
       ),
@@ -272,25 +312,33 @@ class _RecurringPageState extends State<RecurringPage> {
     if (ok != true) return;
 
     final money = double.tryParse(moneyCtrl.text.trim());
-    if (money == null || money <= 0) {
+    if (money == null || !money.isFinite || money <= 0) {
       _toast('请输入正确的金额');
       return;
     }
-    final item = (r ?? const Recurring(
-      money: 0,
-      type: 0,
-      category: '',
-      remark: '',
-      cycle: 'monthly',
-      day: 1,
-    )).copyWith(
-      money: money,
-      type: isExpense ? 0 : 1,
-      category: category,
-      remark: remarkCtrl.text.trim(),
-      cycle: cycle,
-      day: cycle == 'daily' ? 0 : day,
-    );
+    final item =
+        (r ??
+                const Recurring(
+                  money: 0,
+                  type: 0,
+                  category: '',
+                  remark: '',
+                  cycle: 'monthly',
+                  day: 1,
+                ))
+            .copyWith(
+              money: money,
+              type: isExpense ? 0 : 1,
+              category: category,
+              remark: remarkCtrl.text.trim(),
+              cycle: cycle,
+              day: cycle == 'daily'
+                  ? 0
+                  : (cycle == 'weekly' ? day.clamp(1, 7) : day.clamp(1, 28)),
+              lastRun: r != null && (r.cycle != cycle || r.day != day)
+                  ? ''
+                  : r?.lastRun,
+            );
     if (r == null) {
       await DatabaseHelper.instance.insertRecurring(item);
     } else {
@@ -305,16 +353,20 @@ class _RecurringPageState extends State<RecurringPage> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('删除周期记账'),
-        content: Text('删除「${r.remark.isEmpty ? r.category : r.remark}」后不再自动入账，'
-            '已生成的账单不受影响。'),
+        content: Text(
+          '删除「${r.remark.isEmpty ? r.category : r.remark}」后不再自动入账，'
+          '已生成的账单不受影响。',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('删除')),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
         ],
       ),
     );
@@ -329,6 +381,7 @@ class _RecurringPageState extends State<RecurringPage> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-          SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      );
   }
 }

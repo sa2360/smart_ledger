@@ -18,11 +18,14 @@ class LlmService {
   static String get apiKey => SettingsService.apiKey;
   static String get model => SettingsService.model;
 
-  static bool get isConfigured => apiKey.isNotEmpty;
+  static bool get isConfigured => SettingsService.isReady;
 
   /// 通用对话请求，返回模型回复文本
-  static Future<String> chat(String userContent,
-      {String? system, double temperature = 0.3}) async {
+  static Future<String> chat(
+    String userContent, {
+    String? system,
+    double temperature = 0.3,
+  }) async {
     return chatMessages([
       if (system != null) {'role': 'system', 'content': system},
       {'role': 'user', 'content': userContent},
@@ -30,10 +33,15 @@ class LlmService {
   }
 
   /// 多轮对话请求：messages 为完整的 OpenAI 格式消息列表
-  static Future<String> chatMessages(List<Map<String, String>> messages,
-      {double temperature = 0.3}) async {
+  static Future<String> chatMessages(
+    List<Map<String, String>> messages, {
+    double temperature = 0.3,
+  }) async {
     if (!isConfigured) {
       throw LlmException('AI 服务未就绪，请到「我的」页开启内置模型或配置自定义模型');
+    }
+    if (!SettingsService.validServiceUrl(baseUrl)) {
+      throw LlmException('AI 接口必须使用有效的 HTTPS 地址');
     }
     final uri = Uri.parse('$baseUrl/chat/completions');
     try {
@@ -42,7 +50,7 @@ class LlmService {
             uri,
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer $apiKey',
+              if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
             },
             body: jsonEncode({
               'model': model,
@@ -108,7 +116,8 @@ class NlBillParser {
     final now = DateTime.now();
     // 用户过往的分类纠正记录作为 few-shot 参考，越用越准
     final correctionHints = await CorrectionStore.hints();
-    final system = '你是记账助手。用户会给出口语化的收支描述，'
+    final system =
+        '你是记账助手。用户会给出口语化的收支描述，'
         '你需要拆分出每一条收支记录。'
         '今天日期：${now.year}-${_p(now.month)}-${_p(now.day)} '
         '${_p(now.hour)}:${_p(now.minute)}。'
@@ -131,15 +140,17 @@ class NlBillParser {
     for (final item in list) {
       if (item is! Map) continue;
       final money = num.tryParse('${item['money']}')?.toDouble();
-      if (money == null || money <= 0) continue;
+      if (money == null || !money.isFinite || money <= 0) continue;
       final isIncome = item['type'] == 1 || item['type'] == '1';
-      bills.add(Bill(
-        money: money,
-        type: isIncome ? 1 : 0,
-        category: '${item['category'] ?? '其他'}',
-        remark: '${item['remark'] ?? ''}',
-        createTime: defaultTime,
-      ));
+      bills.add(
+        Bill(
+          money: money,
+          type: isIncome ? 1 : 0,
+          category: '${item['category'] ?? '其他'}',
+          remark: '${item['remark'] ?? ''}',
+          createTime: defaultTime,
+        ),
+      );
     }
     if (bills.isEmpty) {
       throw LlmException('未能从文本中识别出有效账单，请描述得更具体一些');
@@ -155,7 +166,8 @@ class ReceiptParser {
   /// 输入 OCR 识别出的小票全文，返回账单列表
   static Future<List<Bill>> parse(String ocrText) async {
     final now = DateTime.now();
-    final system = '你是小票解析助手。用户提供的是购物小票的 OCR 识别文本，'
+    final system =
+        '你是小票解析助手。用户提供的是购物小票的 OCR 识别文本，'
         '可能包含噪点或乱码，请提取其中的商品/服务消费条目。'
         '今天日期：${now.year}-${_p(now.month)}-${_p(now.day)} '
         '${_p(now.hour)}:${_p(now.minute)}。'
@@ -174,14 +186,16 @@ class ReceiptParser {
     for (final item in list) {
       if (item is! Map) continue;
       final money = num.tryParse('${item['money']}')?.toDouble();
-      if (money == null || money <= 0) continue;
-      bills.add(Bill(
-        money: money,
-        type: 0,
-        category: '${item['category'] ?? '购物'}',
-        remark: '${item['remark'] ?? '小票消费'}',
-        createTime: defaultTime,
-      ));
+      if (money == null || !money.isFinite || money <= 0) continue;
+      bills.add(
+        Bill(
+          money: money,
+          type: 0,
+          category: '${item['category'] ?? '购物'}',
+          remark: '${item['remark'] ?? '小票消费'}',
+          createTime: defaultTime,
+        ),
+      );
     }
     if (bills.isEmpty) {
       throw LlmException('未能从该小票中识别出消费条目');
@@ -210,13 +224,15 @@ class MonthlyAnalyzer {
     final lines = <String>[];
     for (final b in bills) {
       final t = b.isExpense ? '支出' : '收入';
-      lines.add('${b.createTime} | $t | ${b.category} | ${b.money.toStringAsFixed(2)}元 | ${b.remark}');
+      lines.add(
+        '${b.createTime} | $t | ${b.category} | ${b.money.toStringAsFixed(2)}元 | ${b.remark}',
+      );
     }
     final cateLine = categorySpend.entries
         .map((e) => '${e.key}:${e.value.toStringAsFixed(2)}元')
         .join('，');
     final budgetLine = currentBudget == null
-        ? '本月未设置预算'
+        ? (yearly ? '年度报告不比较单月预算' : '本月未设置预算')
         : '总预算${currentBudget.totalBudget}元，分类预算${currentBudget.cateBudget}';
 
     final planInstruction = yearly
@@ -226,7 +242,8 @@ class MonthlyAnalyzer {
 {"餐饮":数字,"交通":数字,"购物":数字,"娱乐":数字,"其他":数字}
 金额必须参考本月实际消费，合理收紧。''';
 
-    final prompt = '''
+    final prompt =
+        '''
 以下是用户 $month 的全部账单明细（时间 | 类型 | 分类 | 金额 | 备注）：
 ${lines.join('\n')}
 
@@ -247,12 +264,28 @@ $planInstruction''';
 
     if (!yearly) {
       // 从回复里拆出 JSON 预算部分
-      final jsonMatch =
-          RegExp(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```').firstMatch(text);
+      final jsonMatch = RegExp(
+        r'```(?:json)?\s*(\{[\s\S]*?\})\s*```',
+      ).firstMatch(text);
       if (jsonMatch != null) {
         try {
           final m = jsonDecode(jsonMatch.group(1)!) as Map<String, dynamic>;
           plan = m.map((k, v) => MapEntry(k, (v as num).toDouble()));
+          plan.removeWhere(
+            (k, v) =>
+                !const [
+                  '餐饮',
+                  '交通',
+                  '购物',
+                  '娱乐',
+                  '学习',
+                  '医疗',
+                  '居住',
+                  '其他',
+                ].contains(k) ||
+                !v.isFinite ||
+                v < 0,
+          );
           // 从报告中移除 JSON 块，避免正文出现裸 JSON
           report = text.replaceRange(jsonMatch.start, jsonMatch.end, '').trim();
         } catch (_) {}

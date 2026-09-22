@@ -23,8 +23,18 @@ class _SearchPageState extends State<SearchPage> {
   bool _searching = false;
 
   static const _cates = [
-    '餐饮', '交通', '购物', '娱乐', '学习', '医疗', '居住', '其他',
-    '工资', '兼职', '理财', '红包',
+    '餐饮',
+    '交通',
+    '购物',
+    '娱乐',
+    '学习',
+    '医疗',
+    '居住',
+    '其他',
+    '工资',
+    '兼职',
+    '理财',
+    '红包',
   ];
 
   @override
@@ -60,8 +70,12 @@ class _SearchPageState extends State<SearchPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: context.bg,
-      appBar: AppBar(title: const Text('搜索账单',
-          style: TextStyle(fontWeight: FontWeight.bold))),
+      appBar: AppBar(
+        title: const Text(
+          '搜索账单',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
       body: Column(
         children: [
           Container(
@@ -80,53 +94,68 @@ class _SearchPageState extends State<SearchPage> {
                     filled: true,
                     fillColor: context.bg,
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none),
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _category,
-                      isDense: true,
-                      decoration: const InputDecoration(
-                          labelText: '分类', isDense: true),
-                      items: [
-                        const DropdownMenuItem(value: null, child: Text('全部')),
-                        for (final c in _cates)
-                          DropdownMenuItem(value: c, child: Text(c)),
-                      ],
-                      onChanged: (v) => setState(() => _category = v),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _category,
+                        isDense: true,
+                        decoration: const InputDecoration(
+                          labelText: '分类',
+                          isDense: true,
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('全部'),
+                          ),
+                          for (final c in _cates)
+                            DropdownMenuItem(value: c, child: Text(c)),
+                        ],
+                        onChanged: (v) => setState(() => _category = v),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _minCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
-                      decoration:
-                          const InputDecoration(labelText: '最低金额', isDense: true),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _minCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: '最低金额',
+                          isDense: true,
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _maxCtrl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
-                      decoration:
-                          const InputDecoration(labelText: '最高金额', isDense: true),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _maxCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: '最高金额',
+                          isDense: true,
+                        ),
+                      ),
                     ),
-                  ),
-                ]),
+                  ],
+                ),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
                     style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF1E88E5)),
+                      backgroundColor: const Color(0xFF1E88E5),
+                    ),
                     onPressed: _searching ? null : _search,
                     child: const Text('搜索'),
                   ),
@@ -137,58 +166,72 @@ class _SearchPageState extends State<SearchPage> {
           if (_searched)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-              child: Row(children: [
-                Text('找到 ${_results.length} 条',
+              child: Row(
+                children: [
+                  Text(
+                    '找到 ${_results.length} 条',
                     style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: context.onSurface)),
-                const Spacer(),
-                Text('支出 ¥${_totalExpense.toStringAsFixed(2)} · '
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: context.onSurface,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '支出 ¥${_totalExpense.toStringAsFixed(2)} · '
                     '收入 ¥${_totalIncome.toStringAsFixed(2)}',
-                    style: TextStyle(fontSize: 12, color: context.subtext)),
-              ]),
+                    style: TextStyle(fontSize: 12, color: context.subtext),
+                  ),
+                ],
+              ),
             ),
           Expanded(
             child: !_searched
                 ? Center(
-                    child: Text('输入条件后点击搜索',
-                        style: TextStyle(color: context.subtext)))
+                    child: Text(
+                      '输入条件后点击搜索',
+                      style: TextStyle(color: context.subtext),
+                    ),
+                  )
                 : _results.isEmpty
-                    ? Center(
-                        child: Text('没有符合条件的账单',
-                            style: TextStyle(color: context.subtext)))
-                    : ListView(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              color: context.card,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: Column(
-                              children: [
-                                for (final b in _results) ...[
-                                  BillTile(
-                                    bill: b,
-                                    onTap: () async {
-                                      await Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                              builder: (_) =>
-                                                  BillEditPage(bill: b)));
-                                      _search();
-                                    },
-                                  ),
-                                  if (b != _results.last)
-                                    Divider(height: 1, color: context.divider),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ],
+                ? Center(
+                    child: Text(
+                      '没有符合条件的账单',
+                      style: TextStyle(color: context.subtext),
+                    ),
+                  )
+                : ListView(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          color: context.card,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
+                          children: [
+                            for (final b in _results) ...[
+                              BillTile(
+                                bill: b,
+                                onTap: () async {
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => BillEditPage(bill: b),
+                                    ),
+                                  );
+                                  _search();
+                                },
+                              ),
+                              if (b != _results.last)
+                                Divider(height: 1, color: context.divider),
+                            ],
+                          ],
+                        ),
                       ),
+                    ],
+                  ),
           ),
         ],
       ),

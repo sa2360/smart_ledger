@@ -42,8 +42,7 @@ const Map<String, Color> categoryColors = {
   '红包': Color(0xFFEF5350),
 };
 
-IconData iconOf(String category) =>
-    categoryIcons[category] ?? Icons.category;
+IconData iconOf(String category) => categoryIcons[category] ?? Icons.category;
 
 Color colorOf(String category) =>
     categoryColors[category] ?? const Color(0xFF9E9E9E);
@@ -67,24 +66,30 @@ class BillTile extends StatelessWidget {
             CircleAvatar(
               radius: 20,
               backgroundColor: colorOf(bill.category).withValues(alpha: .18),
-              child: Icon(iconOf(bill.category),
-                  size: 22, color: colorOf(bill.category)),
+              child: Icon(
+                iconOf(bill.category),
+                size: 22,
+                color: colorOf(bill.category),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(bill.remark.isEmpty ? bill.category : bill.remark,
-                      style: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w600),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
+                  Text(
+                    bill.remark.isEmpty ? bill.category : bill.remark,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   const SizedBox(height: 2),
                   Text(
                     '${bill.createTime.substring(11)} · ${bill.category}',
-                    style:
-                        TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    style: TextStyle(fontSize: 12, color: context.subtext),
                   ),
                 ],
               ),
@@ -94,7 +99,7 @@ class BillTile extends StatelessWidget {
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: income ? const Color(0xFF26A69A) : Colors.black87,
+                color: income ? const Color(0xFF26A69A) : context.onSurface,
               ),
             ),
           ],
@@ -135,17 +140,23 @@ class StatCard extends StatelessWidget {
               children: [
                 Icon(icon, size: 14, color: color),
                 const SizedBox(width: 4),
-                Text(label,
-                    style:
-                        TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                Text(
+                  label,
+                  style: TextStyle(fontSize: 12, color: context.subtext),
+                ),
               ],
             ),
             const SizedBox(height: 6),
-            Text('¥${value.toStringAsFixed(2)}',
-                style: TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.bold, color: color),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
+            Text(
+              '¥${value.toStringAsFixed(2)}',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ),
       ),

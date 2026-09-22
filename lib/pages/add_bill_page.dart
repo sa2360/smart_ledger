@@ -42,7 +42,7 @@ class _AddBillPageState extends State<AddBillPage>
   bool _nlLoading = false;
 
   // 语音记账：录音 -> 百度短语音识别
-  final _recorder = AudioRecorder();
+  AudioRecorder? _recorder;
   bool _listening = false; // 正在录音
   bool _recognizing = false; // 正在识别
   String? _pendingVoicePath;
@@ -74,6 +74,7 @@ class _AddBillPageState extends State<AddBillPage>
   @override
   void dispose() {
     _autoStopTimer?.cancel();
+    if (_recorder != null) unawaited(_recorder!.dispose());
     _tab.dispose();
     _moneyCtrl.dispose();
     _remarkCtrl.dispose();
@@ -109,41 +110,51 @@ class _AddBillPageState extends State<AddBillPage>
   // ---------------- 手动记账 ----------------
 
   Widget _manualTab() => ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          if (_templates.isNotEmpty) _templateRow(),
-          _card(Column(children: [
-            Row(children: [
-              Expanded(
-                child: SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: true, label: Text('支出')),
-                    ButtonSegment(value: false, label: Text('收入')),
-                  ],
-                  selected: {_expense},
-                  onSelectionChanged: (s) => setState(() {
-                    _expense = s.first;
-                    _category = _expense ? _expenseCates.first : _incomeCates.first;
-                  }),
+    padding: const EdgeInsets.all(14),
+    children: [
+      if (_templates.isNotEmpty) _templateRow(),
+      _card(
+        Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(value: true, label: Text('支出')),
+                      ButtonSegment(value: false, label: Text('收入')),
+                    ],
+                    selected: {_expense},
+                    onSelectionChanged: (s) => setState(() {
+                      _expense = s.first;
+                      _category = _expense
+                          ? _expenseCates.first
+                          : _incomeCates.first;
+                    }),
+                  ),
                 ),
-              ),
-            ]),
+              ],
+            ),
             const SizedBox(height: 14),
             TextField(
               controller: _moneyCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               decoration: InputDecoration(
                 prefixText: '¥ ',
                 prefixStyle: const TextStyle(
-                    fontSize: 24, fontWeight: FontWeight.bold),
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
                 hintText: '0.00',
                 filled: true,
-                fillColor: const Color(0xFFF8F9FB),
+                fillColor: context.bg,
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none),
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
             const SizedBox(height: 14),
@@ -151,20 +162,22 @@ class _AddBillPageState extends State<AddBillPage>
               spacing: 8,
               runSpacing: 8,
               children: (_expense ? _expenseCates : _incomeCates)
-                  .map((c) => ChoiceChip(
-                        label: Text(c),
-                        selected: _category == c,
-                        selectedColor:
-                            colorOf(c).withValues(alpha: .25),
-                        labelStyle: TextStyle(
-                            color: _category == c
-                                ? Colors.black87
-                                : Colors.grey.shade700,
-                            fontWeight: _category == c
-                                ? FontWeight.bold
-                                : FontWeight.normal),
-                        onSelected: (_) => setState(() => _category = c),
-                      ))
+                  .map(
+                    (c) => ChoiceChip(
+                      label: Text(c),
+                      selected: _category == c,
+                      selectedColor: colorOf(c).withValues(alpha: .25),
+                      labelStyle: TextStyle(
+                        color: _category == c
+                            ? context.onSurface
+                            : context.subtext,
+                        fontWeight: _category == c
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                      onSelected: (_) => setState(() => _category = c),
+                    ),
+                  )
                   .toList(),
             ),
             const SizedBox(height: 14),
@@ -173,10 +186,11 @@ class _AddBillPageState extends State<AddBillPage>
               decoration: InputDecoration(
                 hintText: '备注（选填）',
                 filled: true,
-                fillColor: const Color(0xFFF8F9FB),
+                fillColor: context.bg,
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none),
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -185,88 +199,104 @@ class _AddBillPageState extends State<AddBillPage>
               borderRadius: BorderRadius.circular(10),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(children: [
-                  const Icon(Icons.access_time,
-                      size: 18, color: Color(0xFF1E88E5)),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${_time.year}-${_p(_time.month)}-${_p(_time.day)} '
-                    '${_p(_time.hour)}:${_p(_time.minute)}',
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                ]),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.access_time,
+                      size: 18,
+                      color: Color(0xFF1E88E5),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${_time.year}-${_p(_time.month)}-${_p(_time.day)} '
+                      '${_p(_time.hour)}:${_p(_time.minute)}',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ])),
-          const SizedBox(height: 18),
-          Row(children: [
-            Expanded(
-              child: FilledButton(
-                style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF1E88E5),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14))),
-                onPressed: _saveManual,
-                child: const Text('保存', style: TextStyle(fontSize: 16)),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+      Row(
+        children: [
+          Expanded(
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF1E88E5),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
+              onPressed: _saveManual,
+              child: const Text('保存', style: TextStyle(fontSize: 16)),
             ),
-            const SizedBox(width: 10),
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14)),
-              onPressed: _saveTemplate,
-              icon: const Icon(Icons.bookmark_add_outlined, size: 18),
-              label: const Text('存为模板'),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
             ),
-          ]),
+            onPressed: _saveTemplate,
+            icon: const Icon(Icons.bookmark_add_outlined, size: 18),
+            label: const Text('存为模板'),
+          ),
         ],
-      );
+      ),
+    ],
+  );
 
   /// 常用模板横排：点击填入表单，长按删除
   Widget _templateRow() => Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: context.card,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: SizedBox(
-          height: 36,
-          child: Row(children: [
-            Icon(Icons.bookmark, size: 16, color: Colors.amber.shade700),
-            const SizedBox(width: 6),
-            Expanded(
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _templates.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 6),
-                itemBuilder: (_, i) {
-                  final t = _templates[i];
-                  return InkWell(
-                    onTap: () => _applyTemplate(t),
-                    onLongPress: () => _deleteTemplate(i),
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE3F2FD),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        '${t["is_income"] == 1 ? "+" : "-"}¥${t["money"]} ${t["remark"] ?? t["category"]}',
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w600),
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: context.card,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: SizedBox(
+      height: 36,
+      child: Row(
+        children: [
+          Icon(Icons.bookmark, size: 16, color: Colors.amber.shade700),
+          const SizedBox(width: 6),
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _templates.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 6),
+              itemBuilder: (_, i) {
+                final t = _templates[i];
+                return InkWell(
+                  onTap: () => _applyTemplate(t),
+                  onLongPress: () => _deleteTemplate(i),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      '${t["is_income"] == 1 ? "+" : "-"}¥${t["money"]} ${t["remark"] ?? t["category"]}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
             ),
-          ]),
-        ),
-      );
+          ),
+        ],
+      ),
+    ),
+  );
 
   void _applyTemplate(Map<String, dynamic> t) {
     setState(() {
@@ -286,11 +316,13 @@ class _AddBillPageState extends State<AddBillPage>
         content: const Text('确定删除这个常用模板吗？'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('删除')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
         ],
       ),
     );
@@ -302,7 +334,7 @@ class _AddBillPageState extends State<AddBillPage>
 
   Future<void> _saveTemplate() async {
     final money = double.tryParse(_moneyCtrl.text.trim());
-    if (money == null || money <= 0) {
+    if (money == null || !money.isFinite || money <= 0) {
       _toast('先填写金额，再保存为模板');
       return;
     }
@@ -329,27 +361,35 @@ class _AddBillPageState extends State<AddBillPage>
       context: context,
       initialTime: TimeOfDay.fromDateTime(_time),
     );
+    if (!mounted) return;
     setState(() {
-      _time = DateTime(date.year, date.month, date.day,
-          time?.hour ?? 12, time?.minute ?? 0);
+      _time = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time?.hour ?? 12,
+        time?.minute ?? 0,
+      );
     });
   }
 
   Future<void> _saveManual() async {
     final money = double.tryParse(_moneyCtrl.text.trim());
-    if (money == null || money <= 0) {
+    if (money == null || !money.isFinite || money <= 0) {
       _toast('请输入正确的金额');
       return;
     }
     final t = _time;
-    await DatabaseHelper.instance.insertBill(Bill(
-      money: money,
-      type: _expense ? 0 : 1,
-      category: _category,
-      remark: _remarkCtrl.text.trim(),
-      createTime:
-          '${t.year}-${_p(t.month)}-${_p(t.day)} ${_p(t.hour)}:${_p(t.minute)}',
-    ));
+    await DatabaseHelper.instance.insertBill(
+      Bill(
+        money: money,
+        type: _expense ? 0 : 1,
+        category: _category,
+        remark: _remarkCtrl.text.trim(),
+        createTime:
+            '${t.year}-${_p(t.month)}-${_p(t.day)} ${_p(t.hour)}:${_p(t.minute)}',
+      ),
+    );
     notifyDataChanged();
     if (mounted) {
       _toast('记账成功');
@@ -360,44 +400,56 @@ class _AddBillPageState extends State<AddBillPage>
   // ---------------- AI 自然语言记账 ----------------
 
   Widget _aiTab() => ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          _card(Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                const Icon(Icons.auto_awesome,
-                    color: Color(0xFF1E88E5), size: 18),
+    padding: const EdgeInsets.all(14),
+    children: [
+      _card(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.auto_awesome,
+                  color: Color(0xFF1E88E5),
+                  size: 18,
+                ),
                 const SizedBox(width: 6),
-                const Text('AI 智能记账',
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const Text(
+                  'AI 智能记账',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
                 const Spacer(),
-                Text('智能解析',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.grey.shade500)),
-              ]),
-              const SizedBox(height: 10),
-              Text('直接用一句话描述你的消费，AI 会自动拆分账单、识别金额、智能分类：',
-                  style: TextStyle(fontSize: 13, color: context.subtext)),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _nlCtrl,
-                maxLines: 4,
-                textInputAction: TextInputAction.done,
-                decoration: InputDecoration(
-                  hintText: '例如：今天午饭花了25，打车回来12，还买了杯奶茶15',
-                  filled: true,
-                  fillColor: const Color(0xFFF8F9FB),
-                  suffixIcon: _micButton(),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none),
+                Text(
+                  '智能解析',
+                  style: TextStyle(fontSize: 11, color: context.subtext),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '直接用一句话描述你的消费，AI 会自动拆分账单、识别金额、智能分类：',
+              style: TextStyle(fontSize: 13, color: context.subtext),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nlCtrl,
+              maxLines: 4,
+              textInputAction: TextInputAction.done,
+              decoration: InputDecoration(
+                hintText: '例如：今天午饭花了25，打车回来12，还买了杯奶茶15',
+                filled: true,
+                fillColor: context.bg,
+                suffixIcon: _micButton(),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
                 ),
               ),
-              if (_listening || _recognizing) ...[
-                const SizedBox(height: 8),
-                Row(children: [
+            ),
+            if (_listening || _recognizing) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
                   const SizedBox(
                     width: 12,
                     height: 12,
@@ -407,59 +459,73 @@ class _AddBillPageState extends State<AddBillPage>
                   Text(
                     _recognizing ? '识别中，请稍候…' : '正在录音，说完再点一下麦克风停止',
                     style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.primary),
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
                   ),
-                ]),
-              ],
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                children: ['午饭30 奶茶15', '打车12 地铁4元', '发工资8000', '电影票45 爆米花20']
-                    .map((s) => ActionChip(
-                          label: Text(s,
-                              style: const TextStyle(fontSize: 12)),
-                          onPressed: () => _nlCtrl.text = s,
-                        ))
-                    .toList(),
+                ],
               ),
             ],
-          )),
-          const SizedBox(height: 18),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF1E88E5),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14))),
-            onPressed: _nlLoading ? null : _aiParse,
-            icon: _nlLoading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.auto_awesome),
-            label: Text(_nlLoading ? 'AI 解析中…' : 'AI 解析并记账',
-                style: const TextStyle(fontSize: 16)),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              children: ['午饭30 奶茶15', '打车12 地铁4元', '发工资8000', '电影票45 爆米花20']
+                  .map(
+                    (s) => ActionChip(
+                      label: Text(s, style: const TextStyle(fontSize: 12)),
+                      onPressed: () => _nlCtrl.text = s,
+                    ),
+                  )
+                  .toList(),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 18),
+      FilledButton.icon(
+        style: FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF1E88E5),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
           ),
-        ],
-      );
+        ),
+        onPressed: _nlLoading ? null : _aiParse,
+        icon: _nlLoading
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : const Icon(Icons.auto_awesome),
+        label: Text(
+          _nlLoading ? 'AI 解析中…' : 'AI 解析并记账',
+          style: const TextStyle(fontSize: 16),
+        ),
+      ),
+    ],
+  );
 
   /// 语音输入按钮：说话转文字后填入输入框，再由用户点击 AI 解析
   Widget _micButton() => IconButton(
-        icon: _recognizing
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2))
-            : Icon(
-                _listening ? Icons.mic : Icons.mic_none,
-                color: _listening ? Colors.red : Colors.grey,
-              ),
-        tooltip: '语音输入',
-        onPressed: (_listening || _recognizing) && !_listening ? null : _toggleVoice,
-      );
+    icon: _recognizing
+        ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(
+            _listening ? Icons.mic : Icons.mic_none,
+            color: _listening ? Colors.red : Colors.grey,
+          ),
+    tooltip: '语音输入',
+    onPressed: (_listening || _recognizing) && !_listening
+        ? null
+        : _toggleVoice,
+  );
 
   /// 语音记账：点一下开始录音，再点一下停止并识别；最长 55 秒自动停止
   Future<void> _toggleVoice() async {
@@ -468,7 +534,8 @@ class _AddBillPageState extends State<AddBillPage>
       return;
     }
     try {
-      if (!await _recorder.hasPermission()) {
+      final recorder = _recorder ??= AudioRecorder();
+      if (!await recorder.hasPermission()) {
         _toast('需要麦克风权限才能语音记账，请在系统设置中允许');
         return;
       }
@@ -479,7 +546,7 @@ class _AddBillPageState extends State<AddBillPage>
       final dir = await getTemporaryDirectory();
       final path =
           '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.pcm';
-      await _recorder.start(
+      await recorder.start(
         const RecordConfig(
           encoder: AudioEncoder.pcm16bits,
           sampleRate: 16000,
@@ -508,7 +575,7 @@ class _AddBillPageState extends State<AddBillPage>
       _recognizing = true;
     });
     try {
-      await _recorder.stop();
+      await _recorder?.stop();
       final text = await BaiduAsrService.recognizePcmFile(path!);
       if (mounted) {
         setState(() => _recognizing = false);
@@ -537,18 +604,14 @@ class _AddBillPageState extends State<AddBillPage>
       _toast('请先输入消费描述');
       return;
     }
-    if (!SettingsService.apiKey.isNotEmpty) {
+    if (!SettingsService.isReady) {
       _askApiKey();
       return;
     }
     setState(() => _nlLoading = true);
     try {
       final bills = await NlBillParser.parse(input);
-      await DatabaseHelper.instance.insertBills(bills);
-      notifyDataChanged();
-      if (mounted) {
-        _showParsedPreview(bills, '已为你记下 ${bills.length} 笔账单');
-      }
+      if (mounted) await _confirmParsedBills(bills);
     } on LlmException catch (e) {
       _toast(e.message);
     } catch (e) {
@@ -561,27 +624,39 @@ class _AddBillPageState extends State<AddBillPage>
   // ---------------- 小票拍照记账 ----------------
 
   Widget _receiptTab() => ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          _card(Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                const Icon(Icons.document_scanner,
-                    color: Color(0xFF1E88E5), size: 18),
+    padding: const EdgeInsets.all(14),
+    children: [
+      _card(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.document_scanner,
+                  color: Color(0xFF1E88E5),
+                  size: 18,
+                ),
                 const SizedBox(width: 6),
-                const Text('拍照小票记账',
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const Text(
+                  '拍照小票记账',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
                 const Spacer(),
-                Text('OCR + AI',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-              ]),
-              const SizedBox(height: 10),
-              Text('拍摄或选择购物小票照片，自动识别文字并提取消费条目：',
-                  style: TextStyle(fontSize: 13, color: context.subtext)),
-              const SizedBox(height: 12),
-              Row(children: [
+                Text(
+                  'OCR + AI',
+                  style: TextStyle(fontSize: 11, color: context.subtext),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '拍摄或选择购物小票照片，自动识别文字并提取消费条目：',
+              style: TextStyle(fontSize: 13, color: context.subtext),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _ocrLoading ? null : () => _doReceipt(true),
@@ -597,45 +672,55 @@ class _AddBillPageState extends State<AddBillPage>
                     label: const Text('相册'),
                   ),
                 ),
-              ]),
-              if (_ocrLoading) ...[
-                const SizedBox(height: 14),
-                const LinearProgressIndicator(),
-                const SizedBox(height: 8),
-                Text('正在识别小票并交给 AI 解析…',
-                    style: TextStyle(fontSize: 12, color: context.subtext)),
               ],
-              if (_ocrText != null) ...[
-                SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F9FB),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(_ocrText!,
-                      maxLines: 8,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          fontSize: 12, color: context.subtext, height: 1.4)),
-                ),
-              ],
+            ),
+            if (_ocrLoading) ...[
+              const SizedBox(height: 14),
+              const LinearProgressIndicator(),
+              const SizedBox(height: 8),
+              Text(
+                '正在识别小票并交给 AI 解析…',
+                style: TextStyle(fontSize: 12, color: context.subtext),
+              ),
             ],
-          )),
-        ],
-      );
+            if (_ocrText != null) ...[
+              SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: context.bg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  _ocrText!,
+                  maxLines: 8,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.subtext,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ],
+  );
 
   Future<void> _doReceipt(bool fromCamera) async {
-    if (!SettingsService.apiKey.isNotEmpty) {
+    if (!SettingsService.isReady) {
       _askApiKey();
       return;
     }
     final picker = ImagePicker();
     final x = await picker.pickImage(
-        source: fromCamera ? ImageSource.camera : ImageSource.gallery,
-        imageQuality: 85,
-        maxWidth: 1600);
+      source: fromCamera ? ImageSource.camera : ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 1600,
+    );
     if (x == null) return;
     setState(() {
       _ocrLoading = true;
@@ -644,9 +729,13 @@ class _AddBillPageState extends State<AddBillPage>
     try {
       // 第一步：端上 OCR（google_mlkit_text_recognition，离线免费）
       final inputImage = InputImage.fromFilePath(x.path);
-      final recognized =
-          await TextRecognizer(script: TextRecognitionScript.chinese)
-              .processImage(inputImage);
+      final recognizer = TextRecognizer(script: TextRecognitionScript.chinese);
+      final RecognizedText recognized;
+      try {
+        recognized = await recognizer.processImage(inputImage);
+      } finally {
+        await recognizer.close();
+      }
       final text = recognized.text.trim();
       if (text.isEmpty) {
         _toast('未能识别出小票文字，请换个光线好的角度重试');
@@ -657,11 +746,7 @@ class _AddBillPageState extends State<AddBillPage>
 
       // 第二步：小票全文交给 LLM 提取消费条目
       final bills = await ReceiptParser.parse(text);
-      await DatabaseHelper.instance.insertBills(bills);
-      notifyDataChanged();
-      if (mounted) {
-        _showParsedPreview(bills, '已从小票提取 ${bills.length} 笔消费');
-      }
+      if (mounted) await _confirmParsedBills(bills);
     } on LlmException catch (e) {
       _toast(e.message);
     } catch (e) {
@@ -673,45 +758,76 @@ class _AddBillPageState extends State<AddBillPage>
 
   // ---------------- 公共 ----------------
 
-  void _showParsedPreview(List<Bill> bills, String title) {
-    showModalBottomSheet(
+  Future<void> _confirmParsedBills(List<Bill> bills) async {
+    final selected = bills.toSet();
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 14),
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              const Icon(Icons.check_circle, color: Colors.green, size: 20),
-              const SizedBox(width: 6),
-              Text(title,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 15)),
-            ]),
-            const Divider(height: 20),
-            ...bills.map((b) => BillTile(bill: b)),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E88E5)),
-                  onPressed: () {
-                    Navigator.of(context)
-                      ..pop()
-                      ..pop();
-                  },
-                  child: const Text('完成'),
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, update) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(context).height * .7,
+            child: Column(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text(
+                    '核对账单后保存',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                 ),
-              ),
+                Expanded(
+                  child: ListView(
+                    children: [
+                      for (final bill in bills)
+                        CheckboxListTile(
+                          value: selected.contains(bill),
+                          onChanged: (value) => update(() {
+                            if (value == true) {
+                              selected.add(bill);
+                            } else {
+                              selected.remove(bill);
+                            }
+                          }),
+                          title: Text('${bill.remark} · ${bill.category}'),
+                          subtitle: Text(
+                            '${bill.isExpense ? "支出" : "收入"} ¥${bill.money.toStringAsFixed(2)}',
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(sheetContext, false),
+                        child: const Text('取消'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: selected.isEmpty
+                            ? null
+                            : () => Navigator.pop(sheetContext, true),
+                        child: Text('确认保存 ${selected.length} 笔'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-          ],
+          ),
         ),
       ),
     );
+    if (confirmed != true || !mounted) return;
+    await DatabaseHelper.instance.insertBills(selected.toList());
+    notifyDataChanged();
+    if (mounted) {
+      _toast('已保存 ${selected.length} 笔账单');
+      Navigator.pop(context);
+    }
   }
 
   void _askApiKey() {
@@ -719,17 +835,20 @@ class _AddBillPageState extends State<AddBillPage>
   }
 
   void _toast(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+      ..showSnackBar(
+        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      );
   }
 
   Widget _card(Widget child) => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: context.card,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: child,
-      );
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: context.card,
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: child,
+  );
 }

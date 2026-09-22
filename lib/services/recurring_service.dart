@@ -2,6 +2,7 @@ import '../common/global.dart';
 import '../db/database_helper.dart';
 import '../models/bill.dart';
 import '../models/recurring.dart';
+import 'package:sqflite/sqflite.dart';
 
 /// 周期记账执行服务
 /// App 启动 / 首页刷新时检查所有启用的周期项，
@@ -10,44 +11,66 @@ class RecurringService {
   RecurringService._();
 
   /// 执行所有到期任务，返回本次补记的账单条数
-  static Future<int> runDueBills() async {
-    final db = DatabaseHelper.instance;
-    final list = await db.queryRecurrings(enabledOnly: true);
-    final today = _dateOnly(DateTime.now());
+  static Future<int>? _running;
+
+  static Future<int> runDueBills({DateTime? now}) => _running ??= _run(
+    now ?? DateTime.now(),
+  ).whenComplete(() => _running = null);
+
+  static Future<int> _run(DateTime now) async {
+    final db = await DatabaseHelper.instance.db;
+    final inserted = await db.transaction((txn) => _runTransaction(txn, now));
+    if (inserted > 0) notifyDataChanged();
+    return inserted;
+  }
+
+  static Future<int> _runTransaction(Transaction txn, DateTime now) async {
+    final list = (await txn.query(
+      'recurring_table',
+      where: 'enabled = 1',
+    )).map(Recurring.fromMap);
+    final today = _dateOnly(now);
     var inserted = 0;
 
     for (final r in list) {
       final last = r.lastRun.isEmpty ? null : DateTime.tryParse(r.lastRun);
       var cursor = last;
       var changed = false;
-      var guard = 0;
 
       // 逐期推进：每一期生成一条账单，直到下一期超过今天
-      while (guard++ < 400) {
+      while (true) {
         final next = _nextDue(r, cursor, today);
         if (next == null || next.isAfter(today)) break;
         final t = next;
-        await db.insertBill(Bill(
-          money: r.money,
-          type: r.type,
-          category: r.category,
-          remark: r.remark.isEmpty ? '周期记账' : r.remark,
-          createTime:
-              '${t.year}-${_p(t.month)}-${_p(t.day)} 08:00',
-        ));
+        await txn.insert(
+          'bill_table',
+          Bill(
+            money: r.money,
+            type: r.type,
+            category: r.category,
+            remark: r.remark.isEmpty ? '周期记账' : r.remark,
+            createTime: '${t.year}-${_p(t.month)}-${_p(t.day)} 08:00',
+          ).toMap(),
+        );
         inserted++;
         cursor = next;
         changed = true;
       }
       if (changed) {
-        await db.updateRecurring(r.copyWith(
-          lastRun:
-              '${cursor!.year}-${_p(cursor.month)}-${_p(cursor.day)}',
-        ));
+        await txn.update(
+          'recurring_table',
+          r
+              .copyWith(
+                lastRun:
+                    '${cursor!.year}-${_p(cursor.month)}-${_p(cursor.day)}',
+              )
+              .toMap(),
+          where: 'id = ?',
+          whereArgs: [r.id],
+        );
       }
     }
 
-    if (inserted > 0) notifyDataChanged();
     return inserted;
   }
 
@@ -55,13 +78,17 @@ class RecurringService {
   static DateTime? _nextDue(Recurring r, DateTime? last, DateTime today) {
     switch (r.cycle) {
       case 'daily':
-        return last ?? today;
+        return last == null
+            ? today
+            : DateTime(last.year, last.month, last.day + 1);
       case 'weekly':
         if (last == null) {
           // 锚定本周的目标星期几；若已过则从下周开始
           final monday = today.subtract(Duration(days: today.weekday - 1));
           var candidate = monday.add(Duration(days: r.day - 1));
-          if (candidate.isBefore(today)) candidate = candidate.add(const Duration(days: 7));
+          if (candidate.isBefore(today)) {
+            candidate = candidate.add(const Duration(days: 7));
+          }
           return candidate;
         }
         return last.add(const Duration(days: 7));

@@ -1,95 +1,94 @@
-# 一语记 · 智能收支记账 App（smart_ledger）
+# 一语记 · 智能收支记账（smart_ledger）
 
-> 一句话，记好账。
+一句话，记好账。Flutter Android 应用，当前版本 `1.0.1+2`。
 
-基于《智能收支记账APP 软件设计说明书》实现的 **Flutter 移动端 App**（Android）。
-核心亮点：自然语言 AI 记账 + 小票 OCR 拍照记账 + 月度 AI 消费分析 + 智能预算规划。
+## 功能与数据流
 
-## 技术架构（与设计书一致）
+- 手动记账：支出/收入、金额、分类、备注、日期时间；支持修改、删除和常用模板。
+- AI 文本记账：描述 → 模型拆单 → 用户核对并勾选 → 确认后批量入库。取消不会保存。
+- 小票记账：相机/相册 → ML Kit 中文离线 OCR → 识别文本发送给模型 → 核对确认入库。
+- 语音输入：16kHz/16bit/单声道 PCM，55 秒自动停止 → 百度语音识别 → 填入文本框，再由用户解析。
+- 首页：今日/本月/全部筛选、按日分组、月收支、预算进度；本周支出超过前四周平均的 1.5 倍时提醒。
+- 分析：本月/本年 AI 报告、分类占比、近六个月趋势；年度报告按全年明细汇总分类，不混用月度预算。
+- AI 问答：以本月和上月账单为上下文，最多携带最近 8 条对话；回答由模型生成。
+- 预算：支持切换月份，设置总预算及全部八类支出预算；AI 方案保存到下月，可切换查看。
+- 周期记账：每天、每周、每月 1–28 日；启动、回到前台或首页刷新时补记，无独立后台定时任务。
+  每日首次从当天开始；周/月首次从未过去的本周/本月目标日开始。执行后按 `last_run` 补齐遗漏周期。
+  账单和执行日期在同一事务内更新；并发执行合并，不重复入账。旧版本已生成的重复账单不会自动删除。
+- 搜索：关键词、分类、金额范围，最多返回 500 条，页面合计对应返回结果。
+- 分类纠错：最多保存 20 条备注关键词映射，作为下次 AI 文本解析参考；常用模板最多 12 条。
+- 深色/浅色/跟随系统、CSV 导出、JSON 备份恢复。
 
-| 分层 | 实现 |
+## 数据与隐私
+
+账单持久化在手机本地 SQLite `smart_ledger.db`，无账户或云同步。
+**使用 AI 时，相关消费文字、小票 OCR 文本、月度/年度明细或问答所需的最近两个月账单会发送到所选 AI 服务。**
+语音识别会将录音发送给百度，使用中转时先经过自建服务器。小票照片由端上 OCR 处理。
+自定义 API Key 保存在设备 SharedPreferences，并随请求发送至用户配置的接口用于鉴权。
+仅手动记账、查询、预算和本地统计可完全离线使用。
+
+数据库版本 3：
+
+| 表 | 内容 |
 |---|---|
-| UI 展示层 | Flutter Material 3（首页 / AI 分析 / 预算 / 我的 四个 Tab + 记账页三模式） |
-| 业务逻辑层 | 记账逻辑、月度统计、AI 请求封装（`lib/services/llm_service.dart`）、OCR 调用、预算判断 |
-| 数据持久层 | 本地 SQLite（sqflite），`bill_table` / `budget_table` 与设计书第四章完全一致 |
-| 外部服务层 | 内置 AI 模型服务（默认，构建时注入）+ 用户自定义 OpenAI 兼容模型 + 端上离线 OCR（ML Kit 中文） |
+| `bill_table` | 金额、类型（0 支出/1 收入）、分类、备注、时间 |
+| `budget_table` | 月份、总预算、JSON 分类预算 |
+| `recurring_table` | 周期规则、上次执行日期、启用状态 |
+| `restore_preferences` | 恢复时的临时持久化任务，偏好恢复完成后清除 |
 
-## 功能清单
+JSON 备份版本 2 包含三张业务表、模板、纠错记录、主题及自定义接口地址/模型名；**不含 API Key、语音 token、设备标识和聊天历史**。
+恢复前验证全部记录，三张业务表在单个事务中替换。偏好恢复任务与业务数据同事务提交，中断后下次启动继续。
+恢复 v2 后切回内置模式，自定义 Key 需重新输入；兼容 v1 备份，v1 不覆盖本机偏好。
 
-- **手动记账**：金额、收/支、分类（餐饮/交通/购物/娱乐/学习/医疗/居住/其他/工资/兼职/理财/红包）、备注、时间
-- **AI 自然语言记账**：输入「今天午饭25，奶茶15，打车12」，AI 自动拆分多条账单、识别金额、自动分类、生成备注后批量入库
-- **小票拍照记账**：拍照/相册选图 → 端上离线 OCR（google_mlkit_text_recognition 中文模型）→ 小票全文交 AI 提取消费条目 → 入库
-- **账单管理**：今日/本月/全部切换、按日分组统计、修改、删除
-- **月度 AI 分析**：整月账单明细全部拼入 Prompt，AI 输出消费报告（结构分析 + 省钱建议）+ 下月各分类预算方案，预算方案可一键应用
-- **预算管理**：月度总预算 + 分类预算，可视化进度条、超支红色提醒
-- **AI 记账助手对话**：直接用自然语言查账——「我这个月奶茶花了多少？」，AI 基于最近两个月真实账单回答，支持多轮追问
-- **近 6 个月收支趋势**：AI 分析页内置收支折线图，月度走势一目了然
-- **周期自动记账**：房租、订阅等固定收支设定周期（每天/每周/每月）自动入账，错过若干天会自动补记
-- **AI 记账助手对话**：自然语言查账，AI 基于最近两个月真实账单回答，支持多轮追问
-- **近 6 个月收支趋势**：收支折线图
-- **年度 AI 报告**：全年账单喂给 AI 生成年终消费画像
-- **AI 周度预警**：本周支出超过近四周平均 50% 时，首页弹出预警并可请 AI 简评（每周缓存一次）
-- **语音记账**：说话转文字 → 走自然语言 AI 记账管道
-- **分类纠错学习**：修改 AI 归错的分类后自动记录「备注关键词→正确分类」，下次解析作为参考
-- **搜索筛选**：关键词 + 分类 + 金额区间组合查询
-- **常用模板**：保存高频账单为一键模板
-- **数据导出 / 备份恢复**：CSV 导出（Excel 可开）、JSON 全量备份与恢复
-- **深色模式**：跟随系统 / 浅色 / 深色
-- **数据表**：`bill_table` / `budget_table` / `recurring_table`，本地 SQLite 持久化
-- **分类占比饼图**（fl_chart）
+## 代码结构
 
-## 数据库
+- `lib/main.dart`：初始化、主题和四个 Tab；`IndexedStack` 保留页面，`common/global.dart` 通知数据刷新。
+- `lib/db/`、`lib/models/`：SQLite 和账单/预算/周期实体。
+- `lib/pages/`：首页、记账、账单详情、分析、对话、预算、搜索、周期和设置页面。
+- `lib/services/`：AI/语音、周期执行、模板纠错、配置、导出与备份。
+- `relay/server.js`：无第三方依赖的 Node.js 转发服务；部署说明见 [relay/README.md](relay/README.md)。
+- `test/`：数据库事务、恢复、周期执行、页面筛选、统计、预算月份、主题和 AI 流程回归测试。
 
-本地 SQLite 共三张表：`bill_table`（账单）、`budget_table`（预算）、`recurring_table`（周期记账配置）。
+## AI 配置
 
-## AI 接入（内置 + 自定义双模式）
+当前阿里云服务器 `8.163.98.62` 的专用升级步骤见 [服务器升级说明](relay/ALIYUN-MIGRATION.md)。
 
-- **内置模式（默认，开箱即用）**：构建时通过 `--dart-define` 注入内置 AI 服务
-  （接口地址 / 模型名称 / API Key），用户拿到 App 即可直接使用 AI 功能，无需任何配置。
-- **自定义模式**：用户在「我的」页切换，自行填写 OpenAI 兼容接口地址、模型名称和 API Key，
-  支持「测试连接」；未配置 Key 时，本地功能（手动记账、账单、预算、统计）全部可用。
+推荐通过 HTTPS 中转保存上游密钥。构建仅注入中转地址和模型名称：
 
-构建命令示例：
-
-```
-flutter build apk --release \
-  --dart-define=LLM_BASE_URL=https://api.agnes.ai/v1 \
-  --dart-define=LLM_API_KEY=sk-你的Key \
-  --dart-define=LLM_MODEL=agnes-2.5-flash
+```powershell
+flutter build apk --release --dart-define=LLM_RELAY_URL=https://your-domain.example/v1 --dart-define=ASR_RELAY_URL=https://your-domain.example --dart-define=LLM_MODEL=agnes-2.5-flash
 ```
 
-## 构建 / 安装
+`LLM_RELAY_URL` 非空时，内置 AI 不要求客户端保存上游 Key。语音使用 `ASR_RELAY_URL/asr`。
+未注入服务的安装包仍可离线记账，并在「我的」配置 HTTPS 的 OpenAI 兼容接口、模型和 API Key；内置语音则不可用。
+兼容旧版直连参数 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`、`BAIDU_API_KEY`、`BAIDU_SECRET_KEY`，但直连密钥会进入安装包，不用于公开发行。
+生产安装包禁止明文 HTTP，服务必须提供有效 HTTPS。
 
-环境：Flutter 3.47.3（`D:\flutter`）、JDK 17（`D:\jdk17\jdk-17.0.20.1+1`）、Android SDK（`D:\android-sdk`，platform 36 / build-tools 36.0.0 & 36.1.0）。
+## 开发、验证与签名
 
-```
+本机已安装 Flutter 3.47.3 / Dart 3.13.3、JDK 17、Android SDK；依赖锁要求 Dart >=3.12、Flutter >=3.44。
+Windows PowerShell 本机命令（其他机器相应修改路径）：
+
+```powershell
+$env:ANDROID_HOME = 'D:/android-sdk'
+$env:ANDROID_SDK_ROOT = 'D:/android-sdk'
+$env:JAVA_HOME = 'D:/jdk17/jdk-17.0.20.1+1'
+$env:PATH = 'D:/flutter/bin;' + $env:PATH
 flutter pub get
+flutter analyze
+flutter test
+node --test relay/server.test.js
+python tools/check_secrets.py
 flutter build apk --release
-# 产物：build\app\outputs\flutter-apk\app-release.apk
 ```
 
-数据全部存于手机本地 SQLite（`smart_ledger.db`），不上传任何第三方服务器。
+正式构建读取 `android/key.properties`，样例为 `android/key.properties.example`；缺少正式签名时构建明确失败，不回退到 debug 签名。
+本工作区已生成独立的 `android/release-keystore.jks` 和 `android/key.properties`，均已被 Git 忽略。请将这两个文件一并私密备份，后续版本保持相同签名。
+**旧安装包使用 debug 签名，不能被新正式签名包直接覆盖。先在旧 App 导出 JSON 备份，再卸载旧版、安装新版并恢复。**
+产物：`build/app/outputs/flutter-apk/app-release.apk`。摄像头、OCR 和麦克风仍需真实 Android 设备验证。
 
-## 目录结构
+## 已泄露凭据处理
 
-```
-lib/
-├── main.dart                  # 应用入口 + 底部导航框架
-├── common/global.dart         # 全局刷新信号
-├── db/database_helper.dart    # SQLite 建表 + CRUD（bill_table / budget_table）
-├── models/
-│   ├── bill.dart              # 账单实体
-│   └── budget.dart            # 预算实体（分类预算 JSON 存储）
-├── services/
-│   ├── llm_service.dart       # LLM 封装：JSON 提取、自然语言解析、小票解析、月度分析
-│   └── settings_service.dart  # AI 配置：内置 / 自定义双模式，本地存储
-├── pages/
-│   ├── home_page.dart         # 首页：统计面板 + 预算进度 + 按日分组账单
-│   ├── add_bill_page.dart     # 记账页：手动 / AI 文本 / 小票拍照 三模式
-│   ├── bill_edit_page.dart    # 账单修改 / 删除
-│   ├── ai_analysis_page.dart  # AI 月度报告 + 下月预算方案一键应用
-│   ├── budget_page.dart       # 预算设置 + 使用进度 + 超支提醒
-│   ├── profile_page.dart      # AI 服务配置（内置 / 自定义双模式）
-│   └── widgets/               # 分类图标、账单条目、饼图等公共组件
-└── test/widget_test.dart      # 启动冒烟测试
-```
+旧部署文件曾提交上游密钥。当前文件已改为环境变量，旧值仍可能存在于 Git 历史和旧构建产物中。
+需要在 Agnes / 百度控制台撤销旧值、生成新值，并更新服务器私有环境文件后重启；本地改源码不能撤销服务商凭据。
+历史清理应在轮换完成后与仓库协作者协调执行，不能用删除当前文件代替轮换。

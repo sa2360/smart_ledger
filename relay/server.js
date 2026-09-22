@@ -16,7 +16,7 @@ const tls = require('tls');
 // ---------------- CONFIG：至少改这里 ----------------
 // 推荐在 DomCloud 面板/环境变量里设置，而不是写死在文件里：
 //   AGNES_KEY, BAIDU_API_KEY, BAIDU_SECRET_KEY
-// 若面板不支持环境变量，也可直接填在下面引号里。
+// 不要把凭据写入源码。
 const CONFIG = {
   AGNES_KEY: process.env.AGNES_KEY || '',
   AGNES_UPSTREAM: process.env.AGNES_UPSTREAM || 'https://apihub.agnes-ai.cn/v1',
@@ -24,8 +24,9 @@ const CONFIG = {
   BAIDU_SECRET_KEY: process.env.BAIDU_SECRET_KEY || '',
 
   // 限流（每 IP 每天）：0 表示不限
-  // AI 对话不限（上游免费）；语音识别限 100 次/人/天，防刷
-  CHAT_DAILY_LIMIT_PER_IP: parseInt(process.env.CHAT_DAILY_LIMIT_PER_IP || '0', 10),
+  // 默认对话每 IP 200 次、全局 2000 次；语音每 IP 100 次、全局 1000 次。
+  CHAT_DAILY_LIMIT_PER_IP: parseInt(process.env.CHAT_DAILY_LIMIT_PER_IP || '200', 10),
+  CHAT_DAILY_LIMIT_GLOBAL: parseInt(process.env.CHAT_DAILY_LIMIT_GLOBAL || '2000', 10),
   ASR_DAILY_LIMIT_PER_IP: parseInt(process.env.ASR_DAILY_LIMIT_PER_IP || '100', 10),
   ASR_DAILY_LIMIT_GLOBAL: parseInt(process.env.ASR_DAILY_LIMIT_GLOBAL || '1000', 10),
 };
@@ -54,7 +55,7 @@ function rollDay() {
 
 function clientIp(req) {
   const xf = req.headers['x-forwarded-for'];
-  if (typeof xf === 'string' && xf.length > 0) return xf.split(',')[0].trim();
+  if (process.env.TRUST_PROXY === 'true' && typeof xf === 'string' && xf.length > 0) return xf.split(',')[0].trim();
   return req.socket.remoteAddress || 'unknown';
 }
 
@@ -62,7 +63,7 @@ function overLimit(req, route) {
   const perIpMax = route === 'chat'
     ? CONFIG.CHAT_DAILY_LIMIT_PER_IP
     : CONFIG.ASR_DAILY_LIMIT_PER_IP;
-  const globalMax = route === 'chat' ? 0 : CONFIG.ASR_DAILY_LIMIT_GLOBAL;
+  const globalMax = route === 'chat' ? CONFIG.CHAT_DAILY_LIMIT_GLOBAL : CONFIG.ASR_DAILY_LIMIT_GLOBAL;
   if (perIpMax <= 0 && globalMax <= 0) return false;
   rollDay();
   const bucket = counters[route];
@@ -249,7 +250,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (path === '/' || path === '/health')) {
       return sendJson(res, 200, { ok: true, service: 'yiyuji-relay' });
     }
-    if (req.method === 'GET' && path === '/debug-net') {
+    if (req.method === 'GET' && path === '/debug-net' && process.env.ENABLE_NETWORK_DIAGNOSTICS === 'true') {
       const results = await Promise.all(
         ['apihub.agnes-ai.cn', 'vop.baidu.com', 'aip.baidubce.com'].map(probe),
       );
@@ -265,7 +266,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 429, { error: '今日请求次数已达上限' });
     }
     if (isAsr && overLimit(req, 'asr')) {
-      return sendJson(res, 429, { err_no: -200, err_msg: '今日语音识别次数已达上限（100 次/天）' });
+      return sendJson(res, 429, { err_no: -200, err_msg: '今日语音识别次数已达上限' });
     }
 
     if (isChat) {
@@ -284,4 +285,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-server.listen(PORT, () => console.log(`[yiyuji-relay] listening on :${PORT}`));
+if (require.main === module) {
+  server.listen(PORT, process.env.HOST || '127.0.0.1', () => console.log(`[yiyuji-relay] listening on :${PORT}`));
+}
+module.exports = { server };

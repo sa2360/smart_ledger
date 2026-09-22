@@ -34,6 +34,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
   void initState() {
     super.initState();
     refreshSignal.addListener(_onSignal);
+    _loadStats();
   }
 
   @override
@@ -75,13 +76,15 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
   }
 
   Future<void> _analyze() async {
-    if (SettingsService.apiKey.isEmpty) {
+    if (_loading) return;
+    if (!SettingsService.isReady) {
       _toast('AI 服务未就绪，请到「我的」页开启内置模型或配置自定义模型');
       return;
     }
-    await _loadStats();
     setState(() => _loading = true);
     try {
+      await _loadStats();
+      if (!mounted) return;
       final now = DateTime.now();
       final yearly = _reportMode == 1;
       final List<Bill> bills;
@@ -89,29 +92,43 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
         // 全年账单（month 参数为前缀匹配）
         bills = await DatabaseHelper.instance.queryBills(month: '${now.year}');
       } else {
-        bills =
-            await DatabaseHelper.instance.queryBills(month: '${now.year}-${_p(now.month)}');
+        bills = await DatabaseHelper.instance.queryBills(
+          month: '${now.year}-${_p(now.month)}',
+        );
       }
       if (bills.isEmpty) {
         _toast(yearly ? '今年还没有账单记录' : '本月还没有账单记录，先记几笔再来分析吧');
         return;
       }
-      final expense =
-          bills.where((b) => b.isExpense).fold<double>(0, (s, b) => s + b.money);
+      final expense = bills
+          .where((b) => b.isExpense)
+          .fold<double>(0, (s, b) => s + b.money);
       final income = bills
           .where((b) => !b.isExpense)
           .fold<double>(0, (s, b) => s + b.money);
-      final budget =
-          await DatabaseHelper.instance.getBudget('${now.year}-${_p(now.month)}');
+      final budget = yearly
+          ? null
+          : await DatabaseHelper.instance.getBudget(
+              '${now.year}-${_p(now.month)}',
+            );
+      final categorySpend = <String, double>{};
+      for (final bill in bills.where((b) => b.isExpense)) {
+        categorySpend.update(
+          bill.category,
+          (v) => v + bill.money,
+          ifAbsent: () => bill.money,
+        );
+      }
       final (report, plan) = await MonthlyAnalyzer.analyze(
         month: yearly ? '${now.year} 年度' : '${now.year}-${_p(now.month)}',
         bills: bills,
         monthExpense: expense,
         monthIncome: income,
-        categorySpend: _cateSpend,
+        categorySpend: categorySpend,
         currentBudget: budget,
         yearly: yearly,
       );
+      if (!mounted) return;
       setState(() {
         _report = report;
         _plan = plan;
@@ -134,11 +151,9 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
         : DateTime(now.year, now.month + 1);
     final month = '${next.year}-${_p(next.month)}';
     final total = _plan.values.fold<double>(0, (s, v) => s + v);
-    await DatabaseHelper.instance.saveBudget(Budget(
-      totalBudget: total,
-      cateBudget: _plan,
-      month: month,
-    ));
+    await DatabaseHelper.instance.saveBudget(
+      Budget(totalBudget: total, cateBudget: _plan, month: month),
+    );
     notifyDataChanged();
     _toast('已应用 $month 预算方案，可在预算页查看');
   }
@@ -148,8 +163,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
     return Scaffold(
       backgroundColor: context.bg,
       appBar: AppBar(
-        title: Text('AI 消费分析',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text('AI 消费分析', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
       body: _loading
           ? Center(
@@ -158,8 +172,10 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
                 children: [
                   const CircularProgressIndicator(),
                   const SizedBox(height: 16),
-                  Text('AI 正在阅读你的整月账单…',
-                      style: TextStyle(color: context.subtext)),
+                  Text(
+                    _reportMode == 0 ? 'AI 正在阅读你的整月账单…' : 'AI 正在阅读你的全年账单…',
+                    style: TextStyle(color: context.subtext),
+                  ),
                 ],
               ),
             )
@@ -171,54 +187,75 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
                 _chatEntryCard(),
                 const SizedBox(height: 12),
                 if (_trend.any((t) => t.$2 > 0 || t.$3 > 0)) ...[
-                  _card(Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('近 6 个月收支趋势',
+                  _card(
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '近 6 个月收支趋势',
                           style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
-                      const SizedBox(height: 14),
-                      TrendLineChart(data: _trend),
-                    ],
-                  )),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        TrendLineChart(data: _trend),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 12),
                 ],
                 if (_cateSpend.isNotEmpty) ...[
-                  _card(Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('本月分类支出占比',
+                  _card(
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '本月分类支出占比',
                           style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
-                      const SizedBox(height: 12),
-                      CategoryPieChart(data: _cateSpend),
-                    ],
-                  )),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        CategoryPieChart(data: _cateSpend),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 12),
                 ],
                 SegmentedButton<int>(
-                  style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   segments: const [
                     ButtonSegment(value: 0, label: Text('月度报告')),
                     ButtonSegment(value: 1, label: Text('年度报告')),
                   ],
                   selected: {_reportMode},
-                  onSelectionChanged: (s) =>
-                      setState(() => _reportMode = s.first),
+                  onSelectionChanged: (s) => setState(() {
+                    _reportMode = s.first;
+                    _report = null;
+                    _plan = {};
+                  }),
                 ),
                 const SizedBox(height: 10),
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF7E57C2),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14))),
+                    backgroundColor: const Color(0xFF7E57C2),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
                   onPressed: _analyze,
                   icon: const Icon(Icons.auto_awesome),
-                  label: Text(_report == null
-                      ? (_reportMode == 0 ? '生成 AI 月度报告' : '生成 AI 年度报告')
-                      : '重新生成报告',
-                      style: const TextStyle(fontSize: 16)),
+                  label: Text(
+                    _report == null
+                        ? (_reportMode == 0 ? '生成 AI 月度报告' : '生成 AI 年度报告')
+                        : '重新生成报告',
+                    style: const TextStyle(fontSize: 16),
+                  ),
                 ),
                 if (_report != null) ...[
                   const SizedBox(height: 14),
@@ -232,210 +269,272 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
 
   /// AI 记账助手入口卡片
   Widget _chatEntryCard() => InkWell(
-        onTap: () => Navigator.push(
-            context, MaterialPageRoute(builder: (_) => const AiChatPage())),
+    onTap: () => Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AiChatPage()),
+    ),
+    borderRadius: BorderRadius.circular(14),
+    child: Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: context.card,
         borderRadius: BorderRadius.circular(14),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: context.card,
-            borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFF7E57C2).withValues(alpha: .15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.forum, color: Color(0xFF7E57C2), size: 22),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF7E57C2).withValues(alpha: .15),
-                  borderRadius: BorderRadius.circular(10),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'AI 记账助手',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                 ),
-                child: const Icon(Icons.forum,
-                    color: Color(0xFF7E57C2), size: 22),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('AI 记账助手',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 15)),
-                    SizedBox(height: 2),
-                    Text('直接问它：「我这个月奶茶花了多少？」',
-                        style:
-                            TextStyle(fontSize: 12, color: context.subtext)),
-                  ],
+                SizedBox(height: 2),
+                Text(
+                  '直接问它：「我这个月奶茶花了多少？」',
+                  style: TextStyle(fontSize: 12, color: context.subtext),
                 ),
-              ),
-              const Icon(Icons.chevron_right, color: Colors.grey),
-            ],
+              ],
+            ),
           ),
-        ),
-      );
+          const Icon(Icons.chevron_right, color: Colors.grey),
+        ],
+      ),
+    ),
+  );
 
   Widget _statsCard() => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-              colors: [Color(0xFF7E57C2), Color(0xFF5E35B1)]),
-          borderRadius: BorderRadius.circular(14),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        colors: [Color(0xFF7E57C2), Color(0xFF5E35B1)],
+      ),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$_month 收支概览',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.white.withValues(alpha: .85),
+          ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(height: 8),
+        Row(
           children: [
-            Text('$_month 收支概览',
-                style: TextStyle(
-                    fontSize: 12, color: Colors.white.withValues(alpha: .85))),
-            const SizedBox(height: 8),
-            Row(children: [
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('支出',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.white.withValues(alpha: .75))),
-                      Text('¥${_expense.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white)),
-                    ]),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '支出',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withValues(alpha: .75),
+                    ),
+                  ),
+                  Text(
+                    '¥${_expense.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('收入',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.white.withValues(alpha: .75))),
-                      Text('¥${_income.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white)),
-                    ]),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '收入',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withValues(alpha: .75),
+                    ),
+                  ),
+                  Text(
+                    '¥${_income.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('结余',
-                          style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.white.withValues(alpha: .75))),
-                      Text('¥${(_income - _expense).toStringAsFixed(2)}',
-                          style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white)),
-                    ]),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '结余',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withValues(alpha: .75),
+                    ),
+                  ),
+                  Text(
+                    '¥${(_income - _expense).toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
               ),
-            ]),
+            ),
           ],
         ),
-      );
+      ],
+    ),
+  );
 
-  Widget _reportCard() => _card(Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(children: [
+  Widget _reportCard() => _card(
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
             Icon(Icons.auto_awesome, size: 18, color: Color(0xFF7E57C2)),
             SizedBox(width: 6),
-            Text('AI 消费报告',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-          ]),
-          const Divider(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: MarkdownBody(
-              data: _report!,
-              selectable: true,
-              styleSheet: MarkdownStyleSheet(
-                h1: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                h2: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                p: const TextStyle(fontSize: 13.5, height: 1.55),
-                listBullet: const TextStyle(fontSize: 13.5, height: 1.5),
-              ),
+            Text(
+              'AI 消费报告',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+          ],
+        ),
+        const Divider(height: 20),
+        SizedBox(
+          width: double.infinity,
+          child: MarkdownBody(
+            data: _report!,
+            selectable: true,
+            styleSheet: MarkdownStyleSheet(
+              h1: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              h2: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              p: const TextStyle(fontSize: 13.5, height: 1.55),
+              listBullet: const TextStyle(fontSize: 13.5, height: 1.5),
             ),
           ),
-        ],
-      ));
+        ),
+      ],
+    ),
+  );
 
   Widget _planCard() => Container(
-        margin: const EdgeInsets.only(top: 12),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: context.card,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF7E57C2), width: 1.2),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    margin: const EdgeInsets.only(top: 12),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: context.card,
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFF7E57C2), width: 1.2),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
           children: [
-            const Row(children: [
-              Icon(Icons.account_balance_wallet,
-                  size: 18, color: Color(0xFF7E57C2)),
-              SizedBox(width: 6),
-              Text('下月预算方案',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-            ]),
-            const SizedBox(height: 10),
-            ..._plan.entries.map((e) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(children: [
-                    Icon(iconOf(e.key),
-                        size: 18, color: colorOf(e.key)),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(e.key,
-                        style: const TextStyle(fontSize: 13.5))),
-                    Text('¥${e.value.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                            fontSize: 13.5, fontWeight: FontWeight.w600)),
-                  ]),
-                )),
-            const Divider(height: 16),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              const Text('合计',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              Text(
-                  '¥${_plan.values.fold<double>(0, (s, v) => s + v).toStringAsFixed(2)}',
+            Icon(
+              Icons.account_balance_wallet,
+              size: 18,
+              color: Color(0xFF7E57C2),
+            ),
+            SizedBox(width: 6),
+            Text(
+              '下月预算方案',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ..._plan.entries.map(
+          (e) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Icon(iconOf(e.key), size: 18, color: colorOf(e.key)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(e.key, style: const TextStyle(fontSize: 13.5)),
+                ),
+                Text(
+                  '¥${e.value.toStringAsFixed(2)}',
                   style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: Color(0xFF7E57C2))),
-            ]),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF7E57C2)),
-                onPressed: _applyPlan,
-                icon: const Icon(Icons.check, size: 18),
-                label: const Text('一键应用为下月预算'),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Divider(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              '合计',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            Text(
+              '¥${_plan.values.fold<double>(0, (s, v) => s + v).toStringAsFixed(2)}',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+                color: Color(0xFF7E57C2),
               ),
             ),
           ],
         ),
-      );
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF7E57C2),
+            ),
+            onPressed: _applyPlan,
+            icon: const Icon(Icons.check, size: 18),
+            label: const Text('一键应用为下月预算'),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _card(Widget child) => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: context.card,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: child,
-      );
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: context.card,
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: child,
+  );
 
   void _toast(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-          SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      );
   }
 }

@@ -36,16 +36,21 @@ class TrendLineChart extends StatelessWidget {
                 drawVerticalLine: false,
                 horizontalInterval: maxY <= 0 ? 20 : maxY / 4,
                 getDrawingHorizontalLine: (v) => FlLine(
-                    color: const Color(0xFFEEEEEE), strokeWidth: 1),
+                  color: Theme.of(context).dividerColor,
+                  strokeWidth: 1,
+                ),
               ),
               borderData: FlBorderData(show: false),
               titlesData: FlTitlesData(
                 topTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false)),
+                  sideTitles: SideTitles(showTitles: false),
+                ),
                 rightTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false)),
+                  sideTitles: SideTitles(showTitles: false),
+                ),
                 leftTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false)),
+                  sideTitles: SideTitles(showTitles: false),
+                ),
                 bottomTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
@@ -57,9 +62,13 @@ class TrendLineChart extends StatelessWidget {
                       }
                       return Padding(
                         padding: const EdgeInsets.only(top: 6),
-                        child: Text('${data[idx].$1.substring(5)}月',
-                            style: TextStyle(
-                                fontSize: 10, color: Colors.grey.shade600)),
+                        child: Text(
+                          '${data[idx].$1.substring(5)}月',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -120,14 +129,18 @@ class TrendLineChart extends StatelessWidget {
     );
   }
 
-  Widget _legend(String label, Color color) => Row(children: [
-        Container(
-            width: 18,
-            height: 3,
-            decoration: BoxDecoration(
-                color: color, borderRadius: BorderRadius.circular(2))),
-        const SizedBox(width: 4),
-        Text(label,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-      ]);
+  Widget _legend(String label, Color color) => Row(
+    children: [
+      Container(
+        width: 18,
+        height: 3,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+      const SizedBox(width: 4),
+      Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+    ],
+  );
 }

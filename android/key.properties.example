@@ -1,0 +1,5 @@
+# Copy to key.properties and fill locally. Never commit the private file or keystore.
+storeFile=release-keystore.jks
+storePassword=
+keyAlias=yiyuji-release
+keyPassword=

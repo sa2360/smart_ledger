@@ -1,67 +1,69 @@
-# 一语记 · 中转服务部署指南（DomCloud 免费版）
+# 一语记中转服务
 
-中转服务（`relay/server.js`）持有 Agnes / 百度的 API Key，替 App 转发请求。
-**APK 中不包含任何 Key**，Key 只存在服务端。
+纯 Node.js，无第三方运行依赖。推荐 Node.js 20 或更新版本。
 
-## 一、在 DomCloud 创建网站
+现有阿里云服务器 `8.163.98.62` 的迁移顺序见 [ALIYUN-MIGRATION.md](ALIYUN-MIGRATION.md)，支持不购买域名、使用 IP 地址证书。
 
-1. 打开 https://my.domcloud.co
-2. 首页点 **「Create a new website」**（⚠️ 不是 "Create a new server"，那个弹窗是把外部服务器接入面板用的，直接关掉）
-3. 免费计划（Free），子域名随意，比如 `yiyuji-你的名字`，记住最终域名（形如 `yiyuji-xxx.domcloud.id`）
-4. 创建后进入该站点的管理页，找到 **「Deployment」**（部署）页面，把里面的 YAML 内容替换为下面的脚本
+## 接口
 
-## 二、部署 YAML
+- `GET /`、`GET /health`：健康状态。
+- `POST /v1/chat/completions`（也接受 `/chat/completions`）：OpenAI 兼容请求原样转发至 `AGNES_UPSTREAM`，服务端注入 `AGNES_KEY`。
+- `POST /asr`：接收 `speech`（PCM base64）、`len`、`cuid`，服务端使用百度密钥换取 token 后识别。
+- `GET /debug-net`：仅 `ENABLE_NETWORK_DIAGNOSTICS=true` 时开启，默认关闭。
 
-把下面内容粘贴到部署脚本里（替换全部内容），**把三个 Key 换成你自己的**：
+请求正文上限：对话 4 MiB、语音 14 MiB。百度 token 内存缓存 29 天。
 
-```yaml
-features:
-  - node lts
+## 私有配置
 
-nginx:
-  root: public_html/public
-  passenger:
-    enabled: "on"
-    app_start_command: env AGNES_KEY=你的AgnesKey BAIDU_API_KEY=你的百度APIKey BAIDU_SECRET_KEY=你的百度SecretKey node relay.js
+参考 `.env.example`。服务器提供 `AGNES_KEY`、`BAIDU_API_KEY`、`BAIDU_SECRET_KEY`，不要放进脚本、仓库或 APK。
+服务使用 `process.env`，不会自动加载 `.env` 文件。Linux 部署由 systemd `EnvironmentFile` 注入，DomCloud 使用平台私有环境配置。
+App 构建参数为 `LLM_RELAY_URL=https://域名/v1`、`ASR_RELAY_URL=https://域名` 和 `LLM_MODEL`。
 
-commands:
-  - commands:
-      - mkdir -p public_html/public
+## Linux / 阿里云
+
+1. 安装 Node.js，将 `server.js` 和 `deploy-aliyun.sh` 上传到同一目录。
+2. 在服务器创建 `/etc/yiyuji/relay.env`，填写实际密钥，权限设为 `600`，不要使用仓库曾经出现过的旧值。
+3. 执行 `sudo bash deploy-aliyun.sh`。脚本从同目录复制唯一的 `server.js`，通过专用低权限用户运行。
+4. 服务监听 `127.0.0.1:8000`；通过有有效证书的 HTTPS 反向代理暴露公网，不开放后端端口。
+5. 验证 `https://你的域名/health`。更新源码后重新运行脚本。
+
+代理配置示例（放入已有 HTTPS server 块中）：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_read_timeout 130s;
+    client_max_body_size 14m;
+}
 ```
 
-然后先把 `relay/server.js` 上传到网站的 `public_html/relay.js`：
+只有反向代理覆盖了转发头且后端不可被公网直接访问时，才设置 `TRUST_PROXY=true`，否则默认使用 TCP 客户端地址。
 
-- 方式 A：管理页的 **File Manager**（文件管理）里上传
-- 方式 B：SSH 登录后，把文件内容粘贴进去：
-  `nano ~/public_html/relay.js` → 粘贴 → Ctrl+O 保存 → Ctrl+X 退出
+## DomCloud
 
-最后点 **Deploy / 部署** 执行脚本。
+将 `server.js` 上传到 `public_html/relay.js`，设置私有环境变量，使用 `deploy-domcloud.yml`。
+部署文件不含密钥或重复嵌入的服务源码。端口遵循平台注入的 `PORT`，监听地址可通过 `HOST` 配置。
+如平台要求外部容器访问，设置相应监听地址，并保证代理与访问控制配置一致。
 
-## 三、验证
+## 限流
 
-浏览器打开 `https://你的域名/`，看到：
+| 环境变量 | 默认值 |
+|---|---:|
+| `CHAT_DAILY_LIMIT_PER_IP` | 200 |
+| `CHAT_DAILY_LIMIT_GLOBAL` | 2000 |
+| `ASR_DAILY_LIMIT_PER_IP` | 100 |
+| `ASR_DAILY_LIMIT_GLOBAL` | 1000 |
 
-```json
-{"ok":true,"service":"yiyuji-relay"}
+设置为 0 表示该维度不限。计数按 UTC 日期重置，进程重启清零；请求失败也计入次数。
+当前中转不含用户账户鉴权，公开部署应在网关控制访问；默认限流不能替代账户授权。
+
+## 验证与旧凭据
+
+```sh
+node --check server.js
+node --test server.test.js
 ```
 
-即为成功。再用手机试一下 AI 功能即可。
-
-## 四、限流说明
-
-- 默认每 IP 每天 200 次请求、全局每天 2000 次（内存计数，重启清零）
-- 调整：在 `app_start_command` 里加 `DAILY_LIMIT_PER_IP=次数`（0 为不限）
-
-## 五、常见问题
-
-| 现象 | 处理 |
-|---|---|
-| 打不开 502 | 查看管理页 Check → Process Logs，确认 relay.js 已上传到 public_html/ |
-| 改了文件不生效 | SSH 里执行 `restart`，或面板重新 Deploy |
-| AI 回复超时 | 免费版应用是「来请求时拉起」，首次请求慢属正常；月报生成较长，等一会再试 |
-
-## 六、安全须知
-
-- Key 写在部署 YAML / 环境变量里，存于服务端；不要把带 Key 的 YAML 发给别人
-- 免费版流量 2GB/月（一次请求约 10KB，个人使用远用不完）
-- 如果将来换服务器：同一个 `server.js` 在任何能跑 Node 的机器上 `node relay.js` 即可，App 只需改构建时的域名重新打包
+测试使用本机临时端口，无上游请求。旧版本部署文件包含过明文密钥，移出源码不代表已撤销：需要在服务商控制台轮换，并将新值只保存在服务端。

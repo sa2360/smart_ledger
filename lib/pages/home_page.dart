@@ -19,7 +19,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _range = 1; // 0 今日 / 1 本月 / 2 全部
   bool _loading = true;
   double _monthExpense = 0, _monthIncome = 0, _todayExpense = 0;
@@ -33,24 +33,30 @@ class _HomePageState extends State<HomePage> {
 
   static String _p(int n) => n.toString().padLeft(2, '0');
   static String monthStr(DateTime d) => '${d.year}-${_p(d.month)}';
-  static String dayStr(DateTime d) =>
-      '${d.year}-${_p(d.month)}-${_p(d.day)}';
+  static String dayStr(DateTime d) => '${d.year}-${_p(d.month)}-${_p(d.day)}';
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     refreshSignal.addListener(_onSignal);
     _load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     refreshSignal.removeListener(_onSignal);
     super.dispose();
   }
 
   void _onSignal() {
     if (mounted) _load();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
   }
 
   Future<void> _load() async {
@@ -64,7 +70,9 @@ class _HomePageState extends State<HomePage> {
       db.sumOfMonth(0, dayStr(now)),
       db.getBudget(monthStr(now)),
       db.queryBills(
-          month: _range == 0 ? monthStr(now) : null, day: _range == 0 ? dayStr(now) : null),
+        month: _range != 2 ? monthStr(now) : null,
+        day: _range == 0 ? dayStr(now) : null,
+      ),
     ]);
     if (!mounted) return;
     setState(() {
@@ -87,7 +95,10 @@ class _HomePageState extends State<HomePage> {
     final today = DateTime(now.year, now.month, now.day);
     final weekStart = today.subtract(Duration(days: today.weekday - 1));
     final thisWeek = await db.sumBetween(weekStart, now);
-    if (thisWeek <= 0) return;
+    if (thisWeek <= 0) {
+      if (mounted) setState(() => _weekAlert = false);
+      return;
+    }
 
     var prevSum = 0.0;
     var prevWeeks = 0;
@@ -104,7 +115,8 @@ class _HomePageState extends State<HomePage> {
     final avg = prevSum / prevWeeks;
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
-    final dismissed = prefs.getString('alert_dismissed_week') == _weekKeyOf(weekStart);
+    final dismissed =
+        prefs.getString('alert_dismissed_week') == _weekKeyOf(weekStart);
     setState(() {
       _weekSpend = thisWeek;
       _weekAvg = avg;
@@ -125,15 +137,20 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('AI 正在分析本周消费…'), behavior: SnackBarBehavior.floating));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('AI 正在分析本周消费…'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
     try {
       final weekStart = DateTime.tryParse(_weekKey)!;
-      final bills = (await DatabaseHelper.instance
-              .queryBills(month: monthStr(DateTime.now())))
-          .where((b) {
+      final bills = (await DatabaseHelper.instance.queryBills()).where((b) {
         final d = DateTime.tryParse(b.createTime);
-        return d != null && !d.isBefore(weekStart) && b.isExpense;
+        return d != null &&
+            !d.isBefore(weekStart) &&
+            !d.isAfter(DateTime.now()) &&
+            b.isExpense;
       }).toList();
       final lines = [
         for (final b in bills.take(100))
@@ -151,13 +168,21 @@ class _HomePageState extends State<HomePage> {
       if (mounted) _showCommentDialog(reply);
     } on LlmException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(e.message), behavior: SnackBarBehavior.floating));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('分析失败：$e'), behavior: SnackBarBehavior.floating));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('分析失败：$e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       }
     }
   }
@@ -166,15 +191,19 @@ class _HomePageState extends State<HomePage> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Row(children: [
-          Icon(Icons.insights, color: Color(0xFFEF6C00)),
-          SizedBox(width: 8),
-          Text('本周消费简评'),
-        ]),
+        title: const Row(
+          children: [
+            Icon(Icons.insights, color: Color(0xFFEF6C00)),
+            SizedBox(width: 8),
+            Text('本周消费简评'),
+          ],
+        ),
         content: SelectableText(text, style: const TextStyle(height: 1.6)),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text('知道了')),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('知道了'),
+          ),
         ],
       ),
     );
@@ -188,52 +217,63 @@ class _HomePageState extends State<HomePage> {
 
   /// AI 周度预警横幅
   Widget _weeklyAlertBanner() => Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFF3E0),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFFFB74D)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFFF3E0),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFFFFB74D)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            Row(children: [
-              const Icon(Icons.warning_amber_rounded,
-                  color: Color(0xFFEF6C00), size: 20),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '本周已支出 ¥${_weekSpend.toStringAsFixed(2)}，'
-                  '超过近四周平均（¥${_weekAvg.toStringAsFixed(2)}）的 50%',
-                  style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFFE65100)),
+            const Icon(
+              Icons.warning_amber_rounded,
+              color: Color(0xFFEF6C00),
+              size: 20,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                '本周已支出 ¥${_weekSpend.toStringAsFixed(2)}，'
+                '超过近四周平均（¥${_weekAvg.toStringAsFixed(2)}）的 50%',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFE65100),
                 ),
               ),
-            ]),
-            const SizedBox(height: 6),
-            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              TextButton.icon(
-                style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFEF6C00),
-                    visualDensity: VisualDensity.compact),
-                onPressed: _showWeeklyAiComment,
-                icon: const Icon(Icons.auto_awesome, size: 16),
-                label: const Text('AI 分析一下', style: TextStyle(fontSize: 13)),
-              ),
-              const SizedBox(width: 4),
-              TextButton(
-                style: TextButton.styleFrom(
-                    foregroundColor: Colors.grey,
-                    visualDensity: VisualDensity.compact),
-                onPressed: _dismissAlert,
-                child: const Text('知道了', style: TextStyle(fontSize: 13)),
-              ),
-            ]),
+            ),
           ],
         ),
-      );
+        const SizedBox(height: 6),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton.icon(
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFEF6C00),
+                visualDensity: VisualDensity.compact,
+              ),
+              onPressed: _showWeeklyAiComment,
+              icon: const Icon(Icons.auto_awesome, size: 16),
+              label: const Text('AI 分析一下', style: TextStyle(fontSize: 13)),
+            ),
+            const SizedBox(width: 4),
+            TextButton(
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey,
+                visualDensity: VisualDensity.compact,
+              ),
+              onPressed: _dismissAlert,
+              child: const Text('知道了', style: TextStyle(fontSize: 13)),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 
   /// 按日期分组，返回 (日期, 当日支出小计, 该日账单) 列表
   List<(String, double, List<Bill>)> get _groups {
@@ -246,9 +286,11 @@ class _HomePageState extends State<HomePage> {
       for (final k in keys)
         (
           k,
-          map[k]!.where((b) => b.isExpense).fold<double>(0, (s, b) => s + b.money),
           map[k]!
-        )
+              .where((b) => b.isExpense)
+              .fold<double>(0, (s, b) => s + b.money),
+          map[k]!,
+        ),
     ];
   }
 
@@ -263,15 +305,19 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: context.bg,
       appBar: AppBar(
-        title: const Text('一语记',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+        title: const Text(
+          '一语记',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+        ),
         centerTitle: false,
         actions: [
           IconButton(
             icon: const Icon(Icons.search),
             tooltip: '搜索账单',
-            onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const SearchPage())),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SearchPage()),
+            ),
           ),
           SegmentedButton<int>(
             style: const ButtonStyle(visualDensity: VisualDensity.compact),
@@ -304,29 +350,37 @@ class _HomePageState extends State<HomePage> {
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                          colors: [Color(0xFF42A5F5), Color(0xFF1E88E5)]),
+                        colors: [Color(0xFF42A5F5), Color(0xFF1E88E5)],
+                      ),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('本月支出',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.white.withValues(alpha: .85))),
-                        Text('¥${_monthExpense.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white)),
+                        Text(
+                          '本月支出',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: .85),
+                          ),
+                        ),
+                        Text(
+                          '¥${_monthExpense.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
                         const SizedBox(height: 10),
-                        Row(children: [
-                          _darkStat('本月收入', _monthIncome),
-                          const SizedBox(width: 12),
-                          _darkStat('今日支出', _todayExpense),
-                        ]),
-                        if (_budget != null &&
-                            _budget!.totalBudget > 0) ...[
+                        Row(
+                          children: [
+                            _darkStat('本月收入', _monthIncome),
+                            const SizedBox(width: 12),
+                            _darkStat('今日支出', _todayExpense),
+                          ],
+                        ),
+                        if (_budget != null && _budget!.totalBudget > 0) ...[
                           const SizedBox(height: 12),
                           _budgetBar(),
                         ],
@@ -337,13 +391,20 @@ class _HomePageState extends State<HomePage> {
                   if (_bills.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 80),
-                      child: Column(children: [
-                        Icon(Icons.receipt_long,
-                            size: 56, color: Colors.grey.shade400),
-                        const SizedBox(height: 12),
-                        Text('暂无账单，去记一笔吧',
-                            style: TextStyle(color: Colors.grey.shade500)),
-                      ]),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.receipt_long,
+                            size: 56,
+                            color: Colors.grey.shade400,
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            '暂无账单，去记一笔吧',
+                            style: TextStyle(color: context.subtext),
+                          ),
+                        ],
+                      ),
                     )
                   else
                     ..._groups.map(_dayCard),
@@ -354,28 +415,34 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _darkStat(String label, double v) => Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: .16),
-            borderRadius: BorderRadius.circular(10),
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: .16),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: .8),
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.white.withValues(alpha: .8))),
-              Text('¥${v.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white)),
-            ],
+          Text(
+            '¥${v.toStringAsFixed(2)}',
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
   Widget _budgetBar() {
     final total = _budget!.totalBudget;
@@ -387,17 +454,22 @@ class _HomePageState extends State<HomePage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('月度预算',
-                style: TextStyle(
-                    fontSize: 11, color: Colors.white.withValues(alpha: .8))),
+            Text(
+              '月度预算',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.white.withValues(alpha: .8),
+              ),
+            ),
             Text(
               over
                   ? '已超支 ¥${(_monthExpense - total).toStringAsFixed(2)}'
                   : '剩余 ¥${(total - _monthExpense).toStringAsFixed(2)} / ¥${total.toStringAsFixed(0)}',
               style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
             ),
           ],
         ),
@@ -409,7 +481,8 @@ class _HomePageState extends State<HomePage> {
             minHeight: 8,
             backgroundColor: Colors.white.withValues(alpha: .25),
             valueColor: AlwaysStoppedAnimation(
-                over ? const Color(0xFFFF5252) : const Color(0xFF69F0AE)),
+              over ? const Color(0xFFFF5252) : const Color(0xFF69F0AE),
+            ),
           ),
         ),
       ],
@@ -432,24 +505,33 @@ class _HomePageState extends State<HomePage> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(_rangeLabel(day),
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600)),
-                Text('支出 ¥${daySum.toStringAsFixed(2)}',
-                    style: TextStyle(
-                        fontSize: 12, color: Colors.grey.shade600)),
+                Text(
+                  _rangeLabel(day),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  '支出 ¥${daySum.toStringAsFixed(2)}',
+                  style: TextStyle(fontSize: 12, color: context.subtext),
+                ),
               ],
             ),
           ),
           const Divider(height: 1),
-          ...list.map((b) => BillTile(
-                bill: b,
-                onTap: () async {
-                  await Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => BillEditPage(bill: b)));
-                  _load();
-                },
-              )),
+          ...list.map(
+            (b) => BillTile(
+              bill: b,
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => BillEditPage(bill: b)),
+                );
+                _load();
+              },
+            ),
+          ),
         ],
       ),
     );
