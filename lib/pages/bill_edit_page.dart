@@ -25,6 +25,7 @@ class _BillEditPageState extends State<BillEditPage> {
   );
   late bool _expense = _bill.isExpense;
   late String _category = _bill.category;
+  bool _saving = false;
 
   static const _expenseCates = ['餐饮', '交通', '购物', '娱乐', '学习', '医疗', '居住', '其他'];
   static const _incomeCates = ['工资', '兼职', '理财', '红包', '其他'];
@@ -48,7 +49,7 @@ class _BillEditPageState extends State<BillEditPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_outline, color: Colors.red),
-            onPressed: _delete,
+            onPressed: _saving ? null : _delete,
           ),
         ],
       ),
@@ -158,7 +159,7 @@ class _BillEditPageState extends State<BillEditPage> {
                 borderRadius: BorderRadius.circular(14),
               ),
             ),
-            onPressed: _save,
+            onPressed: _saving ? null : _save,
             child: const Text('保存修改', style: TextStyle(fontSize: 16)),
           ),
         ],
@@ -167,48 +168,80 @@ class _BillEditPageState extends State<BillEditPage> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final money = double.tryParse(_moneyCtrl.text.trim());
-    if (money == null || !money.isFinite || money <= 0) return;
-    // 分类纠错学习：用户改了分类且备注非空时记录下来，
-    // 之后自然语言解析会参考这些「备注关键词→正确分类」
-    if (_category != _bill.category && _remarkCtrl.text.trim().isNotEmpty) {
-      await CorrectionStore.add(_remarkCtrl.text.trim(), _category);
+    if (money == null || !money.isFinite || money <= 0) {
+      _toast('请输入正确的金额');
+      return;
     }
-    await DatabaseHelper.instance.updateBill(
-      _bill.copyWith(
-        money: money,
-        type: _expense ? 0 : 1,
-        category: _category,
-        remark: _remarkCtrl.text.trim(),
-      ),
+    final remark = _remarkCtrl.text.trim();
+    final category = _category;
+    final updated = _bill.copyWith(
+      money: money,
+      type: _expense ? 0 : 1,
+      category: category,
+      remark: remark,
     );
-    notifyDataChanged();
-    if (mounted) Navigator.pop(context);
+    setState(() => _saving = true);
+    try {
+      await DatabaseHelper.instance.updateBill(updated);
+      // 分类纠错学习：用户改了分类且备注非空时记录下来，
+      // 之后自然语言解析会参考这些「备注关键词→正确分类」
+      if (category != _bill.category && remark.isNotEmpty) {
+        try {
+          await CorrectionStore.add(remark, category);
+        } catch (_) {
+          // 学习记录失败不影响已提交的账单。
+        }
+      }
+      notifyDataChanged();
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      _toast('保存失败：$e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _delete() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('删除账单'),
-        content: const Text('确定要删除这条账单吗？删除后不可恢复。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await DatabaseHelper.instance.deleteBill(_bill.id!);
-      notifyDataChanged();
-      if (mounted) Navigator.pop(context);
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('删除账单'),
+          content: const Text('确定要删除这条账单吗？删除后不可恢复。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('删除'),
+            ),
+          ],
+        ),
+      );
+      if (ok == true) {
+        await DatabaseHelper.instance.deleteBill(_bill.id!);
+        notifyDataChanged();
+        if (mounted) Navigator.pop(context);
+      }
+    } catch (e) {
+      _toast('删除失败：$e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _toast(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 }

@@ -84,6 +84,17 @@ void main() {
     expect(await RecurringService.runDueBills(now: DateTime(2026, 2, 28)), 0);
   });
 
+  test('编辑旧快照不能回退周期执行日期而导致重复入账', () async {
+    final id = await db.insertRecurring(recurring());
+    final stale = (await db.queryRecurrings()).single;
+    final now = DateTime(2026, 9, 28);
+    await RecurringService.runDueBills(now: now);
+    await db.updateRecurring(stale.copyWith(id: id, remark: '改备注'));
+    expect((await db.queryRecurrings()).single.lastRun, '2026-09-28');
+    expect(await RecurringService.runDueBills(now: now), 0);
+    expect(await db.queryBills(), hasLength(1));
+  });
+
   test('周期执行日期更新失败时，账单插入一起回滚', () async {
     await db.insertRecurring(recurring());
     final sql = await db.db;

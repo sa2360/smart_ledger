@@ -1,0 +1,5 @@
+{
+  "LLM_RELAY_URL": "https://8.163.98.62/v1",
+  "ASR_RELAY_URL": "https://8.163.98.62",
+  "LLM_MODEL": "agnes-2.5-flash"
+}

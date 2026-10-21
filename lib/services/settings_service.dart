@@ -93,10 +93,11 @@ class SettingsService {
 
   static String get model => useCustom ? customModel : builtinModel;
 
-  static String get apiKey => useCustom ? customApiKey : builtinApiKey;
+  static String get apiKey =>
+      useCustom ? customApiKey : (relayUrl.isNotEmpty ? '' : builtinApiKey);
 
   static bool get isReady =>
-      baseUrl.isNotEmpty &&
+      validServiceUrl(baseUrl) &&
       model.isNotEmpty &&
       ((!useCustom && relayUrl.isNotEmpty) || apiKey.isNotEmpty);
 

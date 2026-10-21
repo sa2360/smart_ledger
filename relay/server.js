@@ -13,6 +13,12 @@ const https = require('https');
 const dns = require('dns');
 const tls = require('tls');
 
+function dailyLimit(name, fallback) {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`invalid ${name}`);
+  return value;
+}
+
 // ---------------- CONFIG：至少改这里 ----------------
 // 推荐在 DomCloud 面板/环境变量里设置，而不是写死在文件里：
 //   AGNES_KEY, BAIDU_API_KEY, BAIDU_SECRET_KEY
@@ -25,10 +31,10 @@ const CONFIG = {
 
   // 限流（每 IP 每天）：0 表示不限
   // 默认对话每 IP 200 次、全局 2000 次；语音每 IP 100 次、全局 1000 次。
-  CHAT_DAILY_LIMIT_PER_IP: parseInt(process.env.CHAT_DAILY_LIMIT_PER_IP || '200', 10),
-  CHAT_DAILY_LIMIT_GLOBAL: parseInt(process.env.CHAT_DAILY_LIMIT_GLOBAL || '2000', 10),
-  ASR_DAILY_LIMIT_PER_IP: parseInt(process.env.ASR_DAILY_LIMIT_PER_IP || '100', 10),
-  ASR_DAILY_LIMIT_GLOBAL: parseInt(process.env.ASR_DAILY_LIMIT_GLOBAL || '1000', 10),
+  CHAT_DAILY_LIMIT_PER_IP: dailyLimit('CHAT_DAILY_LIMIT_PER_IP', 200),
+  CHAT_DAILY_LIMIT_GLOBAL: dailyLimit('CHAT_DAILY_LIMIT_GLOBAL', 2000),
+  ASR_DAILY_LIMIT_PER_IP: dailyLimit('ASR_DAILY_LIMIT_PER_IP', 100),
+  ASR_DAILY_LIMIT_GLOBAL: dailyLimit('ASR_DAILY_LIMIT_GLOBAL', 1000),
 };
 
 // ---------------- 简易每日限流（内存版，重启清零） ----------------
@@ -82,16 +88,20 @@ function readBody(req, limitBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let failed = false;
     req.on('data', (c) => {
+      if (failed) return;
       size += c.length;
       if (size > limitBytes) {
-        reject(new Error('body too large'));
-        req.destroy();
+        failed = true;
+        chunks.length = 0;
+        reject(Object.assign(new Error('body too large'), { status: 413 }));
         return;
       }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('end', () => { if (!failed) resolve(Buffer.concat(chunks)); });
+    req.on('aborted', () => reject(new Error('request aborted')));
     req.on('error', reject);
   });
 }
@@ -106,31 +116,52 @@ function sendJson(res, code, obj) {
 }
 
 // HTTPS 请求（转发用），返回 { status, headers, body:Buffer }
-function httpsRequest(urlStr, { method = 'POST', headers = {}, body = null, timeoutMs = 120000 } = {}) {
+function httpsRequest(urlStr, { method = 'POST', headers = {}, body = null, timeoutMs = 120000, maxResponseBytes = 8 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
+    if (u.protocol !== 'https:') return reject(new Error('upstream must use HTTPS'));
+    let timer;
+    const finish = (error, value) => {
+      clearTimeout(timer);
+      if (error) reject(error); else resolve(value);
+    };
     const req = https.request(
       {
         hostname: u.hostname,
-        port: 443,
+        port: u.port || 443,
         path: u.pathname + u.search,
         method,
-        headers: { Host: u.hostname, ...headers },
+        headers: { Host: u.host, ...headers },
         timeout: timeoutMs,
       },
       (res) => {
         const chunks = [];
-        res.on('data', (c) => chunks.push(c));
+        let size = 0;
+        res.on('error', (e) => finish(e));
+        res.on('aborted', () => finish(new Error('upstream response aborted')));
+        res.on('data', (c) => {
+          size += c.length;
+          if (size > maxResponseBytes) {
+            const error = new Error('upstream response too large');
+            finish(error);
+            res.destroy(error);
+            req.destroy(error);
+            return;
+          }
+          chunks.push(c);
+        });
         res.on('end', () =>
-          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+          finish(null, { status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
       },
     );
     req.on('timeout', () => req.destroy(new Error('upstream timeout')));
+    timer = setTimeout(() => req.destroy(new Error('upstream timeout')), timeoutMs);
+    timer.unref();
     req.on('error', (e) => {
       const detail = Array.isArray(e.errors)
         ? e.errors.map((x) => `${x.code || x.name}:${x.message}`).join(' | ')
         : (e.code || e.name) + ':' + e.message;
-      reject(new Error(`connect ${u.hostname} failed => ${detail}`));
+      finish(new Error(`connect ${u.hostname} failed => ${detail}`));
     });
     if (body) req.write(body);
     req.end();
@@ -163,7 +194,7 @@ async function handleChat(req, res, path) {
     return sendJson(res, 404, { error: 'not found' });
   }
   const raw = await readBody(req, 4 * 1024 * 1024);
-  const upstream = await httpsRequest(`${CONFIG.AGNES_UPSTREAM}/chat/completions`, {
+  const upstream = await httpsRequest(`${CONFIG.AGNES_UPSTREAM.replace(/\/+$/, '')}/chat/completions`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${CONFIG.AGNES_KEY}`,
@@ -191,8 +222,8 @@ async function handleAsr(req, res) {
   } catch (_) {
     return sendJson(res, 400, { err_no: -101, err_msg: 'bad json' });
   }
-  if (!payload.speech || !payload.len) {
-    return sendJson(res, 400, { err_no: -102, err_msg: 'missing speech/len' });
+  if (!validAudioPayload(payload)) {
+    return sendJson(res, 400, { err_no: -102, err_msg: 'invalid PCM speech/len/cuid (maximum 60 seconds)' });
   }
   const token = await getBaiduToken();
   const baiduBody = JSON.stringify({
@@ -219,6 +250,15 @@ async function handleAsr(req, res) {
   res.end(upstream.body);
 }
 
+function validAudioPayload(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const { speech, len, cuid } = payload;
+  if (!Number.isInteger(len) || len <= 0 || len > 16000 * 2 * 60 || len % 2 !== 0) return false;
+  if (typeof speech !== 'string' || speech.length !== 4 * Math.ceil(len / 3)) return false;
+  const decoded = Buffer.from(speech, 'base64');
+  if (decoded.length !== len || decoded.toString('base64') !== speech) return false;
+  return cuid === undefined || (typeof cuid === 'string' && cuid.length > 0 && cuid.length <= 60);
+}
 
 // 网络自诊断：DNS 解析 + TLS 连接逐项报告
 function probe(host) {
@@ -278,8 +318,8 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 404, { error: 'not found' });
   } catch (e) {
     console.error('[relay error]', path, e.message || e);
-    if (!res.headersSent) {
-      sendJson(res, 502, { error: `relay error: ${e.message || e}` });
+    if (!res.headersSent && !res.destroyed) {
+      sendJson(res, e.status === 413 ? 413 : 502, { error: e.status === 413 ? 'request body too large' : 'upstream service unavailable' });
     }
   }
 });
@@ -288,4 +328,4 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 if (require.main === module) {
   server.listen(PORT, process.env.HOST || '127.0.0.1', () => console.log(`[yiyuji-relay] listening on :${PORT}`));
 }
-module.exports = { server };
+module.exports = { server, httpsRequest, readBody, validAudioPayload, dailyLimit };

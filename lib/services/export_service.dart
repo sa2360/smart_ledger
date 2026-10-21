@@ -23,9 +23,9 @@ class ExportService {
         [
           b.money.toStringAsFixed(2),
           b.isExpense ? '支出' : '收入',
-          b.category,
-          '"${b.remark.replaceAll('"', '""')}"',
-          b.createTime,
+          csvText(b.category),
+          csvText(b.remark),
+          csvText(b.createTime),
         ].join(','),
       );
     }
@@ -69,4 +69,10 @@ class ExportService {
   }
 
   static String _p(int n) => n.toString().padLeft(2, '0');
+
+  /// 文本列统一转义，避免逗号/换行拆列以及表格软件把备注作为公式执行。
+  static String csvText(String value) {
+    final safe = RegExp(r'^\s*[=+@-]').hasMatch(value) ? "'$value" : value;
+    return '"${safe.replaceAll('"', '""')}"';
+  }
 }

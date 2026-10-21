@@ -1,6 +1,6 @@
 # 一语记 · 智能收支记账（smart_ledger）
 
-一句话，记好账。Flutter Android 应用，当前版本 `1.0.1+2`。
+一句话，记好账。Flutter Android 应用，当前版本 `1.0.2+3`。
 
 ## 功能与数据流
 
@@ -15,7 +15,8 @@
 - 周期记账：每天、每周、每月 1–28 日；启动、回到前台或首页刷新时补记，无独立后台定时任务。
   每日首次从当天开始；周/月首次从未过去的本周/本月目标日开始。执行后按 `last_run` 补齐遗漏周期。
   账单和执行日期在同一事务内更新；并发执行合并，不重复入账。旧版本已生成的重复账单不会自动删除。
-- 搜索：关键词、分类、金额范围，最多返回 500 条，页面合计对应返回结果。
+- 搜索：关键词、分类、金额范围、收支类型和日期区间；每页 100 条，可加载全部匹配结果。
+  数量和收支合计对应全部匹配账单，日期包含开始及结束当天；关键词中的 `%`、`_` 和反斜杠按字面匹配。
 - 分类纠错：最多保存 20 条备注关键词映射，作为下次 AI 文本解析参考；常用模板最多 12 条。
 - 深色/浅色/跟随系统、CSV 导出、JSON 备份恢复。
 
@@ -49,11 +50,19 @@ JSON 备份版本 2 包含三张业务表、模板、纠错记录、主题及自
 - `relay/server.js`：无第三方依赖的 Node.js 转发服务；部署说明见 [relay/README.md](relay/README.md)。
 - `test/`：数据库事务、恢复、周期执行、页面筛选、统计、预算月份、主题和 AI 流程回归测试。
 
+本轮检查和后续验证事项见 [项目进度记录](PROJECT_PROGRESS.md)。
+
 ## AI 配置
 
 当前阿里云服务器 `8.163.98.62` 的专用升级步骤见 [服务器升级说明](relay/ALIYUN-MIGRATION.md)。
 
-推荐通过 HTTPS 中转保存上游密钥。构建仅注入中转地址和模型名称：
+现有生产服务地址已保存在 `config/production.json`，只含公开地址和模型名，不含上游密钥。正式打包使用固定脚本，避免遗漏 AI/语音配置：
+
+```powershell
+./tools/build_release.ps1 -Flutter D:/flutter/bin/flutter.bat
+```
+
+更换服务器时更新该配置文件。通用 HTTPS 中转的手动构建示例：
 
 ```powershell
 flutter build apk --release --dart-define=LLM_RELAY_URL=https://your-domain.example/v1 --dart-define=ASR_RELAY_URL=https://your-domain.example --dart-define=LLM_MODEL=agnes-2.5-flash
@@ -79,7 +88,7 @@ flutter analyze
 flutter test
 node --test relay/server.test.js
 python tools/check_secrets.py
-flutter build apk --release
+./tools/build_release.ps1 -Flutter D:/flutter/bin/flutter.bat -NoPub
 ```
 
 正式构建读取 `android/key.properties`，样例为 `android/key.properties.example`；缺少正式签名时构建明确失败，不回退到 debug 签名。

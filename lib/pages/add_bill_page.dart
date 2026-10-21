@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
@@ -36,6 +37,7 @@ class _AddBillPageState extends State<AddBillPage>
   final _remarkCtrl = TextEditingController();
   String _category = '餐饮';
   DateTime _time = DateTime.now();
+  bool _saving = false;
 
   // AI 记账
   final _nlCtrl = TextEditingController();
@@ -45,6 +47,7 @@ class _AddBillPageState extends State<AddBillPage>
   AudioRecorder? _recorder;
   bool _listening = false; // 正在录音
   bool _recognizing = false; // 正在识别
+  bool _voiceStarting = false;
   String? _pendingVoicePath;
   Timer? _autoStopTimer;
 
@@ -231,7 +234,7 @@ class _AddBillPageState extends State<AddBillPage>
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              onPressed: _saveManual,
+              onPressed: _saving ? null : _saveManual,
               child: const Text('保存', style: TextStyle(fontSize: 16)),
             ),
           ),
@@ -374,26 +377,34 @@ class _AddBillPageState extends State<AddBillPage>
   }
 
   Future<void> _saveManual() async {
+    if (_saving) return;
     final money = double.tryParse(_moneyCtrl.text.trim());
     if (money == null || !money.isFinite || money <= 0) {
       _toast('请输入正确的金额');
       return;
     }
     final t = _time;
-    await DatabaseHelper.instance.insertBill(
-      Bill(
-        money: money,
-        type: _expense ? 0 : 1,
-        category: _category,
-        remark: _remarkCtrl.text.trim(),
-        createTime:
-            '${t.year}-${_p(t.month)}-${_p(t.day)} ${_p(t.hour)}:${_p(t.minute)}',
-      ),
-    );
-    notifyDataChanged();
-    if (mounted) {
-      _toast('记账成功');
-      Navigator.pop(context);
+    setState(() => _saving = true);
+    try {
+      await DatabaseHelper.instance.insertBill(
+        Bill(
+          money: money,
+          type: _expense ? 0 : 1,
+          category: _category,
+          remark: _remarkCtrl.text.trim(),
+          createTime:
+              '${t.year}-${_p(t.month)}-${_p(t.day)} ${_p(t.hour)}:${_p(t.minute)}',
+        ),
+      );
+      notifyDataChanged();
+      if (mounted) {
+        _toast('记账成功');
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      _toast('保存失败，请重试：$e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -522,28 +533,30 @@ class _AddBillPageState extends State<AddBillPage>
             color: _listening ? Colors.red : Colors.grey,
           ),
     tooltip: '语音输入',
-    onPressed: (_listening || _recognizing) && !_listening
-        ? null
-        : _toggleVoice,
+    onPressed: _voiceStarting || _recognizing ? null : _toggleVoice,
   );
 
   /// 语音记账：点一下开始录音，再点一下停止并识别；最长 55 秒自动停止
   Future<void> _toggleVoice() async {
+    if (_voiceStarting || _recognizing) return;
     if (_listening) {
       await _stopAndRecognize();
       return;
     }
+    setState(() => _voiceStarting = true);
     try {
       final recorder = _recorder ??= AudioRecorder();
       if (!await recorder.hasPermission()) {
         _toast('需要麦克风权限才能语音记账，请在系统设置中允许');
         return;
       }
+      if (!mounted) return;
       if (!BaiduAsrService.isConfigured) {
         _toast('语音服务未配置，请使用最新版安装包');
         return;
       }
       final dir = await getTemporaryDirectory();
+      if (!mounted) return;
       final path =
           '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.pcm';
       await recorder.start(
@@ -554,6 +567,11 @@ class _AddBillPageState extends State<AddBillPage>
         ),
         path: path,
       );
+      if (!mounted) {
+        await recorder.stop();
+        await _removeRecording(path);
+        return;
+      }
       setState(() {
         _listening = true;
         _pendingVoicePath = path;
@@ -564,10 +582,13 @@ class _AddBillPageState extends State<AddBillPage>
       });
     } catch (e) {
       if (mounted) _toast('无法启动录音：请检查麦克风权限（$e）');
+    } finally {
+      if (mounted) setState(() => _voiceStarting = false);
     }
   }
 
   Future<void> _stopAndRecognize() async {
+    if (!_listening || _recognizing) return;
     _autoStopTimer?.cancel();
     final path = _pendingVoicePath;
     setState(() {
@@ -595,10 +616,23 @@ class _AddBillPageState extends State<AddBillPage>
         setState(() => _recognizing = false);
         _toast('识别失败：$e');
       }
+    } finally {
+      _pendingVoicePath = null;
+      if (path != null) await _removeRecording(path);
+    }
+  }
+
+  static Future<void> _removeRecording(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } on FileSystemException {
+      // 临时文件清理失败不影响已完成的识别。
     }
   }
 
   Future<void> _aiParse() async {
+    if (_nlLoading || _saving) return;
     final input = _nlCtrl.text.trim();
     if (input.isEmpty) {
       _toast('请先输入消费描述');
@@ -711,22 +745,22 @@ class _AddBillPageState extends State<AddBillPage>
   );
 
   Future<void> _doReceipt(bool fromCamera) async {
+    if (_ocrLoading || _saving) return;
     if (!SettingsService.isReady) {
       _askApiKey();
       return;
     }
-    final picker = ImagePicker();
-    final x = await picker.pickImage(
-      source: fromCamera ? ImageSource.camera : ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 1600,
-    );
-    if (x == null) return;
     setState(() {
       _ocrLoading = true;
       _ocrText = null;
     });
     try {
+      final x = await ImagePicker().pickImage(
+        source: fromCamera ? ImageSource.camera : ImageSource.gallery,
+        imageQuality: 85,
+        maxWidth: 1600,
+      );
+      if (x == null || !mounted) return;
       // 第一步：端上 OCR（google_mlkit_text_recognition，离线免费）
       final inputImage = InputImage.fromFilePath(x.path);
       final recognizer = TextRecognizer(script: TextRecognitionScript.chinese);
@@ -742,7 +776,8 @@ class _AddBillPageState extends State<AddBillPage>
         return;
       }
       _ocrText = text;
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      setState(() {});
 
       // 第二步：小票全文交给 LLM 提取消费条目
       final bills = await ReceiptParser.parse(text);
@@ -821,12 +856,17 @@ class _AddBillPageState extends State<AddBillPage>
         ),
       ),
     );
-    if (confirmed != true || !mounted) return;
-    await DatabaseHelper.instance.insertBills(selected.toList());
-    notifyDataChanged();
-    if (mounted) {
-      _toast('已保存 ${selected.length} 笔账单');
-      Navigator.pop(context);
+    if (confirmed != true || !mounted || _saving) return;
+    setState(() => _saving = true);
+    try {
+      await DatabaseHelper.instance.insertBills(selected.toList());
+      notifyDataChanged();
+      if (mounted) {
+        _toast('已保存 ${selected.length} 笔账单');
+        Navigator.pop(context);
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 

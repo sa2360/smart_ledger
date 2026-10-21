@@ -90,7 +90,7 @@ cat > /etc/systemd/system/yiyuji-cert-renew.service <<UNIT
 Description=Renew Yiyuji HTTPS certificate
 [Service]
 Type=oneshot
-ExecStart=/snap/bin/certbot renew --cert-name ${PUBLIC_IP} --quiet
+ExecStart=/snap/bin/certbot renew --cert-name ${PUBLIC_IP} --quiet --no-random-sleep-on-renew
 UNIT
 cat > /etc/systemd/system/yiyuji-cert-renew.timer <<'UNIT'
 [Unit]
@@ -107,7 +107,7 @@ systemctl daemon-reload
 # 先演练再启动本项目的 timer，避免 OnBootSec 已过时立即触发并争用 Certbot 锁。
 # 演练失败也保留自动续期任务，但返回失败让部署者处理原因。
 RENEW_TEST_STATUS=0
-"$CERTBOT" renew --cert-name "$PUBLIC_IP" --dry-run || RENEW_TEST_STATUS=$?
+"$CERTBOT" renew --cert-name "$PUBLIC_IP" --dry-run --no-random-sleep-on-renew || RENEW_TEST_STATUS=$?
 systemctl enable --now yiyuji-cert-renew.timer
 test "$RENEW_TEST_STATUS" -eq 0 || exit "$RENEW_TEST_STATUS"
 curl --fail --max-time 15 "https://${PUBLIC_IP}/health"

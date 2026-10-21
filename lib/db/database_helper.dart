@@ -2,6 +2,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../models/bill.dart';
+import '../models/bill_search.dart';
 import '../models/budget.dart';
 import '../models/recurring.dart';
 
@@ -16,7 +17,13 @@ class DatabaseHelper {
   static Future<Database>? _opening;
 
   Future<Database> get db async {
-    return _opening ??= _init();
+    final opening = _opening ??= _init();
+    try {
+      return await opening;
+    } catch (_) {
+      if (identical(_opening, opening)) _opening = null;
+      rethrow;
+    }
   }
 
   Future<void> close() async {
@@ -187,35 +194,55 @@ class DatabaseHelper {
     double? maxMoney,
   }) async {
     final d = await db;
-    final where = <String>[];
-    final args = <Object>[];
-    if (keyword != null && keyword.trim().isNotEmpty) {
-      where.add('(remark LIKE ? OR category LIKE ?)');
-      final kw = '%${keyword.trim()}%';
-      args
-        ..add(kw)
-        ..add(kw);
-    }
-    if (category != null && category.isNotEmpty) {
-      where.add('category = ?');
-      args.add(category);
-    }
-    if (minMoney != null) {
-      where.add('money >= ?');
-      args.add(minMoney);
-    }
-    if (maxMoney != null) {
-      where.add('money <= ?');
-      args.add(maxMoney);
-    }
+    final (where, args) = BillSearchQuery(
+      keyword: keyword ?? '',
+      category: category,
+      minMoney: minMoney,
+      maxMoney: maxMoney,
+    ).sqlFilter;
     final res = await d.query(
       'bill_table',
-      where: where.isEmpty ? null : where.join(' AND '),
+      where: where,
       whereArgs: args.isEmpty ? null : args,
       orderBy: 'create_time DESC, id DESC',
       limit: 500,
     );
     return res.map(Bill.fromMap).toList();
+  }
+
+  /// 明细与全量合计来自同一数据库快照，分页不会截断统计。
+  Future<({List<Bill> bills, int count, double expense, double income})>
+  searchBillPage(
+    BillSearchQuery query, {
+    int offset = 0,
+    int limit = 100,
+  }) async {
+    if (offset < 0 || limit <= 0) throw ArgumentError('无效分页参数');
+    final d = await db;
+    final (where, args) = query.sqlFilter;
+    return d.transaction((txn) async {
+      final totals = (await txn.rawQuery(
+        'SELECT COUNT(*) AS count, '
+        'SUM(CASE WHEN type = 0 THEN money ELSE 0 END) AS expense, '
+        'SUM(CASE WHEN type = 1 THEN money ELSE 0 END) AS income '
+        'FROM bill_table ${where == null ? '' : 'WHERE $where'}',
+        args,
+      )).single;
+      final rows = await txn.query(
+        'bill_table',
+        where: where,
+        whereArgs: args.isEmpty ? null : args,
+        orderBy: 'create_time DESC, id DESC',
+        limit: limit,
+        offset: offset,
+      );
+      return (
+        bills: rows.map(Bill.fromMap).toList(),
+        count: totals['count'] as int,
+        expense: (totals['expense'] as num?)?.toDouble() ?? 0,
+        income: (totals['income'] as num?)?.toDouble() ?? 0,
+      );
+    });
   }
 
   /// 统计某月各分类支出总额，按金额降序
@@ -279,11 +306,41 @@ class DatabaseHelper {
 
   Future<int> updateRecurring(Recurring r) async {
     final d = await db;
+    return d.transaction((txn) async {
+      final rows = await txn.query(
+        'recurring_table',
+        where: 'id = ?',
+        whereArgs: [r.id],
+      );
+      if (rows.isEmpty) return 0;
+      final current = Recurring.fromMap(rows.single);
+      final scheduleChanged = current.cycle != r.cycle || current.day != r.day;
+      final now = DateTime.now();
+      final today =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-'
+          '${now.day.toString().padLeft(2, '0')}';
+      return txn.update(
+        'recurring_table',
+        {
+          ...r.toMap(),
+          // 页面可能在后台补记前打开，不能把旧 last_run 写回数据库。
+          'last_run': scheduleChanged && current.lastRun != today
+              ? ''
+              : current.lastRun,
+        },
+        where: 'id = ?',
+        whereArgs: [r.id],
+      );
+    });
+  }
+
+  Future<int> setRecurringEnabled(int id, bool enabled) async {
+    final d = await db;
     return d.update(
       'recurring_table',
-      r.toMap(),
+      {'enabled': enabled ? 1 : 0},
       where: 'id = ?',
-      whereArgs: [r.id],
+      whereArgs: [id],
     );
   }
 

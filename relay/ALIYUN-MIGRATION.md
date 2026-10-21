@@ -1,5 +1,10 @@
 # 当前服务器升级：8.163.98.62
 
+2026-10-02 本地在线复测：HTTPS `/health` 返回 200；`agnes-2.5-flash` 回复 `OK`；
+将本机合成的 16kHz/16bit/单声道中文 PCM 发送至 `/asr`，返回 HTTP 200、`err_no=0`，
+识别结果为「午饭30元，奶茶15元。」。证明当前 AI 和百度语音中转均可用，手机录音流程仍需真机验收。
+本轮没有修改服务器部署。生产 APK 参数现已固定在 `config/production.json` 和 `tools/build_release.ps1`。
+
 本次检查时 `http://8.163.98.62:8000/health` 返回正常，说明旧版中转正在运行。
 健康检查不代表上游 AI/语音密钥有效。
 
@@ -83,7 +88,13 @@ HTTPS 和新版 App 确认可用后，删除安全组对公网的 8000 放行规
 
 ## 5. 新 APK
 
-本项目正式包使用以下构建参数：
+本项目正式包使用固定配置打包（配置只含下面三个公开参数）：
+
+```powershell
+./tools/build_release.ps1 -Flutter D:/flutter/bin/flutter.bat
+```
+
+等价手动命令：
 
 ```powershell
 flutter build apk --release --dart-define=LLM_RELAY_URL=https://8.163.98.62/v1 --dart-define=ASR_RELAY_URL=https://8.163.98.62 --dart-define=LLM_MODEL=agnes-2.5-flash

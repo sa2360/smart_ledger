@@ -37,7 +37,6 @@ class _AiChatPageState extends State<AiChatPage> {
   @override
   void initState() {
     super.initState();
-    _loadBills();
   }
 
   @override
@@ -88,6 +87,9 @@ class _AiChatPageState extends State<AiChatPage> {
     _scrollToBottom();
 
     try {
+      // 每次提问前等待最新账单加载，避免首次快速发送使用空数据或跨月仍使用旧数据。
+      await _loadBills();
+      if (!mounted) return;
       // 多轮上下文：最多带最近 8 条历史消息
       final history = _messages
           .take(_messages.length - 1)

@@ -29,6 +29,9 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
   double _expense = 0, _income = 0;
   String _month = '';
   int _reportMode = 0; // 0 月度报告 / 1 年度报告
+  int _dataVersion = 0;
+  String? _planMonth;
+  bool _applying = false;
 
   @override
   void initState() {
@@ -44,10 +47,12 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
   }
 
   void _onSignal() {
+    _dataVersion++;
     if (mounted) {
       setState(() {
         _report = null;
         _plan = {};
+        _planMonth = null;
       });
       _loadStats();
     }
@@ -82,9 +87,10 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
       return;
     }
     setState(() => _loading = true);
+    final version = _dataVersion;
     try {
       await _loadStats();
-      if (!mounted) return;
+      if (!mounted || version != _dataVersion) return;
       final now = DateTime.now();
       final yearly = _reportMode == 1;
       final List<Bill> bills;
@@ -128,10 +134,12 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
         currentBudget: budget,
         yearly: yearly,
       );
-      if (!mounted) return;
+      if (!mounted || version != _dataVersion) return;
       setState(() {
         _report = report;
         _plan = plan;
+        final next = DateTime(now.year, now.month + 1);
+        _planMonth = yearly ? null : '${next.year}-${_p(next.month)}';
       });
     } on LlmException catch (e) {
       _toast(e.message);
@@ -144,18 +152,26 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
 
   /// 把 AI 生成的下月预算写入数据库
   Future<void> _applyPlan() async {
-    if (_plan.isEmpty) return;
-    final now = DateTime.now();
-    final next = now.month == 12
-        ? DateTime(now.year + 1, 1)
-        : DateTime(now.year, now.month + 1);
-    final month = '${next.year}-${_p(next.month)}';
-    final total = _plan.values.fold<double>(0, (s, v) => s + v);
-    await DatabaseHelper.instance.saveBudget(
-      Budget(totalBudget: total, cateBudget: _plan, month: month),
-    );
-    notifyDataChanged();
-    _toast('已应用 $month 预算方案，可在预算页查看');
+    if (_plan.isEmpty || _planMonth == null || _applying) return;
+    final month = _planMonth!;
+    final plan = Map<String, double>.from(_plan);
+    final total = plan.values.fold<double>(0, (s, v) => s + v);
+    if (!total.isFinite) {
+      _toast('预算总额过大，请重新生成');
+      return;
+    }
+    setState(() => _applying = true);
+    try {
+      await DatabaseHelper.instance.saveBudget(
+        Budget(totalBudget: total, cateBudget: plan, month: month),
+      );
+      notifyDataChanged();
+      _toast('已应用 $month 预算方案，可在预算页查看');
+    } catch (e) {
+      _toast('预算保存失败：$e');
+    } finally {
+      if (mounted) setState(() => _applying = false);
+    }
   }
 
   @override
@@ -237,6 +253,7 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
                     _reportMode = s.first;
                     _report = null;
                     _plan = {};
+                    _planMonth = null;
                   }),
                 ),
                 const SizedBox(height: 10),
@@ -511,9 +528,9 @@ class _AiAnalysisPageState extends State<AiAnalysisPage> {
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF7E57C2),
             ),
-            onPressed: _applyPlan,
+            onPressed: _applying ? null : _applyPlan,
             icon: const Icon(Icons.check, size: 18),
-            label: const Text('一键应用为下月预算'),
+            label: Text('应用为 $_planMonth 预算'),
           ),
         ),
       ],

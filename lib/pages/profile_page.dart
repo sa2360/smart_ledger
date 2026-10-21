@@ -349,6 +349,11 @@ class _ProfilePageState extends State<ProfilePage> {
       _toast('已取消选择文件');
       return;
     }
+    if (!mounted) return;
+    // IndexedStack 会保留此页；恢复后同步表单，不能重新保存旧地址及旧 Key。
+    _urlCtrl.text = SettingsService.customBaseUrl;
+    _modelCtrl.text = SettingsService.customModel;
+    _keyCtrl.text = SettingsService.customApiKey;
     notifyDataChanged();
     _toast('恢复完成，共导入 $count 条账单');
   }
@@ -581,7 +586,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _testConnection() async {
-    // 测试前先暂存当前表单内容
+    if (_testing) return;
     final url = _urlCtrl.text.trim();
     final model = _modelCtrl.text.trim();
     final key = _keyCtrl.text.trim();
@@ -594,31 +599,21 @@ class _ProfilePageState extends State<ProfilePage> {
       return;
     }
     setState(() => _testing = true);
-    final restore = (
-      SettingsService.customBaseUrl,
-      SettingsService.customModel,
-      SettingsService.customApiKey,
-      SettingsService.mode,
-    );
-    SettingsService.customBaseUrl = url;
-    SettingsService.customModel = model;
-    SettingsService.customApiKey = key;
-    SettingsService.mode = 'custom';
     try {
       await LlmService.chat(
         '请回复：连接成功',
         temperature: 0,
         system: '你是连通性测试工具，只原样返回用户消息。',
+        configuration: LlmConfiguration(
+          baseUrl: url,
+          model: model,
+          apiKey: key,
+        ),
       );
       if (mounted) _toast('连接成功，模型响应正常');
     } catch (e) {
       if (mounted) _toast('连接失败：$e');
     } finally {
-      // 恢复测试前已保存的配置（测试内容不一定保存）
-      SettingsService.customBaseUrl = restore.$1;
-      SettingsService.customModel = restore.$2;
-      SettingsService.customApiKey = restore.$3;
-      SettingsService.mode = restore.$4;
       if (mounted) setState(() => _testing = false);
     }
   }

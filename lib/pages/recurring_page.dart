@@ -149,8 +149,9 @@ class _RecurringPageState extends State<RecurringPage> {
                     value: r.enabled == 1,
                     activeThumbColor: const Color(0xFF1E88E5),
                     onChanged: (v) async {
-                      await DatabaseHelper.instance.updateRecurring(
-                        r.copyWith(enabled: v ? 1 : 0),
+                      await DatabaseHelper.instance.setRecurringEnabled(
+                        r.id!,
+                        v,
                       );
                       notifyDataChanged();
                       _load();
@@ -178,11 +179,13 @@ class _RecurringPageState extends State<RecurringPage> {
     var category = r?.category ?? '餐饮';
     var cycle = r?.cycle ?? 'monthly';
     var day = r?.day ?? 1;
+    String? error;
+    var submitted = false;
 
     const expenseCates = ['餐饮', '交通', '购物', '娱乐', '学习', '医疗', '居住', '其他'];
     const incomeCates = ['工资', '兼职', '理财', '红包', '其他'];
 
-    final ok = await showDialog<bool>(
+    final route = DialogRoute<bool>(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
@@ -211,9 +214,10 @@ class _RecurringPageState extends State<RecurringPage> {
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: '金额（元）',
                     prefixText: '¥ ',
+                    errorText: error,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -302,16 +306,31 @@ class _RecurringPageState extends State<RecurringPage> {
               child: const Text('取消'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () {
+                if (submitted) return;
+                final value = double.tryParse(moneyCtrl.text.trim());
+                if (value == null || !value.isFinite || value <= 0) {
+                  setDialogState(() => error = '请输入正确的金额');
+                  return;
+                }
+                submitted = true;
+                Navigator.pop(context, true);
+              },
               child: const Text('保存'),
             ),
           ],
         ),
       ),
     );
+    final ok = await Navigator.of(context).push(route);
+    final money = double.tryParse(moneyCtrl.text.trim());
+    final remark = remarkCtrl.text.trim();
+    route.completed.then((_) {
+      moneyCtrl.dispose();
+      remarkCtrl.dispose();
+    });
     if (ok != true) return;
 
-    final money = double.tryParse(moneyCtrl.text.trim());
     if (money == null || !money.isFinite || money <= 0) {
       _toast('请输入正确的金额');
       return;
@@ -330,7 +349,7 @@ class _RecurringPageState extends State<RecurringPage> {
               money: money,
               type: isExpense ? 0 : 1,
               category: category,
-              remark: remarkCtrl.text.trim(),
+              remark: remark,
               cycle: cycle,
               day: cycle == 'daily'
                   ? 0
@@ -378,6 +397,7 @@ class _RecurringPageState extends State<RecurringPage> {
   }
 
   void _toast(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(

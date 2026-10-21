@@ -91,7 +91,13 @@ class RecurringService {
           }
           return candidate;
         }
-        return last.add(const Duration(days: 7));
+        // 备份或周期编辑后的 last_run 不一定是新规则的目标星期。
+        final days = (r.day - last.weekday + 7) % 7;
+        return DateTime(
+          last.year,
+          last.month,
+          last.day + (days == 0 ? 7 : days),
+        );
       case 'monthly':
       default:
         if (last == null) {
@@ -102,7 +108,9 @@ class RecurringService {
           }
           return candidate;
         }
-        return _addMonth(last, r.day.clamp(1, 28));
+        final day = r.day.clamp(1, 28);
+        final candidate = DateTime(last.year, last.month, day);
+        return candidate.isAfter(last) ? candidate : _addMonth(last, day);
     }
   }
 

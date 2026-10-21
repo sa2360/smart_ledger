@@ -93,6 +93,10 @@ class _BudgetPageState extends State<BudgetPage> {
   }
 
   Future<void> _edit() async {
+    final month = _month;
+    String? error;
+    Budget? edited;
+    var submitted = false;
     final ctrlTotal = TextEditingController(
       text: _budget == null || _budget!.totalBudget <= 0
           ? ''
@@ -106,76 +110,112 @@ class _BudgetPageState extends State<BudgetPage> {
               : _budget!.cateBudget[c]!.toStringAsFixed(2),
         ),
     };
-    final ok = await showDialog<bool>(
+    final route = DialogRoute<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text('设置 $_month 预算'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: ctrlTotal,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: '月度总预算（元）',
-                  prefixText: '¥ ',
-                ),
-              ),
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '分类预算（选填）：',
-                  style: TextStyle(fontSize: 13, color: context.subtext),
-                ),
-              ),
-              for (final c in _cates)
+      builder: (_) => StatefulBuilder(
+        builder: (dialogContext, update) => AlertDialog(
+          title: Text('设置 $month 预算'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (error != null)
+                  Text(error!, style: const TextStyle(color: Colors.red)),
                 TextField(
-                  controller: ctrls[c],
+                  controller: ctrlTotal,
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  decoration: InputDecoration(labelText: c, prefixText: '¥ '),
+                  decoration: const InputDecoration(
+                    labelText: '月度总预算（元）',
+                    prefixText: '¥ ',
+                  ),
                 ),
-            ],
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '分类预算（选填）：',
+                    style: TextStyle(fontSize: 13, color: context.subtext),
+                  ),
+                ),
+                for (final c in _cates)
+                  TextField(
+                    controller: ctrls[c],
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(labelText: c, prefixText: '¥ '),
+                  ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (submitted) return;
+                final totalText = ctrlTotal.text.trim();
+                final total = totalText.isEmpty
+                    ? 0.0
+                    : double.tryParse(totalText);
+                final cate = <String, double>{};
+                var valid = total != null && total.isFinite && total >= 0;
+                for (final entry in ctrls.entries) {
+                  final text = entry.value.text.trim();
+                  if (text.isEmpty) continue;
+                  final value = double.tryParse(text);
+                  if (value == null || !value.isFinite || value < 0) {
+                    valid = false;
+                  } else if (value > 0) {
+                    cate[entry.key] = value;
+                  }
+                }
+                final sum = cate.values.fold<double>(0, (s, v) => s + v);
+                if (!valid || !sum.isFinite) {
+                  update(() => error = '预算须为有效的非负金额');
+                  return;
+                }
+                final amount = total! > 0 ? total : sum;
+                if (amount <= 0) {
+                  update(() => error = '请至少设置一项大于零的预算');
+                  return;
+                }
+                edited = Budget(
+                  totalBudget: amount,
+                  cateBudget: cate,
+                  month: month,
+                );
+                submitted = true;
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('保存'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('保存'),
-          ),
-        ],
       ),
     );
+    final ok = await Navigator.of(context).push(route);
+    route.completed.then((_) {
+      ctrlTotal.dispose();
+      for (final ctrl in ctrls.values) {
+        ctrl.dispose();
+      }
+    });
     if (ok != true) return;
-    final total = double.tryParse(ctrlTotal.text.trim()) ?? 0;
-    final cate = <String, double>{};
-    for (final e in ctrls.entries) {
-      final v = double.tryParse(e.value.text.trim());
-      if (v != null && v > 0) cate[e.key] = v;
+    try {
+      await DatabaseHelper.instance.saveBudget(edited!);
+      notifyDataChanged();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('预算保存失败，请重试')));
+      }
     }
-    if (!total.isFinite || total < 0 || cate.values.any((v) => !v.isFinite)) {
-      return;
-    }
-    if (total <= 0 && cate.isEmpty) return;
-    await DatabaseHelper.instance.saveBudget(
-      Budget(
-        totalBudget: total > 0
-            ? total
-            : cate.values.fold<double>(0, (s, v) => s + v),
-        cateBudget: cate,
-        month: _month,
-      ),
-    );
-    notifyDataChanged();
   }
 
   @override

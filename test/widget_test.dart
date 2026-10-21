@@ -17,9 +17,13 @@ import 'package:smart_ledger/services/settings_service.dart';
 import 'test_database.dart';
 
 Future<void> settleDatabase(WidgetTester tester) async {
-  await tester.runAsync(
-    () => Future<void>.delayed(const Duration(milliseconds: 100)),
-  );
+  // SQLite 的连续事务/查询需要多次真实事件循环；虚拟动画时钟不能推进文件 I/O。
+  for (var i = 0; i < 20; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 20));
+  }
   await tester.pumpAndSettle();
 }
 
@@ -38,22 +42,24 @@ void main() {
   });
 
   testWidgets('首页真实加载 SQLite 并区分本月、全部和今日', (tester) async {
-    await db.insertBills([
-      Bill(
-        money: 20,
-        type: 0,
-        category: '餐饮',
-        remark: '本月午饭',
-        createTime: '$thisMonth-${now.day.toString().padLeft(2, '0')} 12:00',
-      ),
-      Bill(
-        money: 80,
-        type: 0,
-        category: '交通',
-        remark: '上月交通',
-        createTime: '$lastMonth-01 12:00',
-      ),
-    ]);
+    await tester.runAsync(
+      () => db.insertBills([
+        Bill(
+          money: 20,
+          type: 0,
+          category: '餐饮',
+          remark: '本月午饭',
+          createTime: '$thisMonth-${now.day.toString().padLeft(2, '0')} 12:00',
+        ),
+        Bill(
+          money: 80,
+          type: 0,
+          category: '交通',
+          remark: '上月交通',
+          createTime: '$lastMonth-01 12:00',
+        ),
+      ]),
+    );
     await tester.pumpWidget(const MaterialApp(home: HomePage()));
     await settleDatabase(tester);
     expect(find.text('本月午饭'), findsOneWidget);
@@ -69,13 +75,15 @@ void main() {
   });
 
   testWidgets('分析页首次打开即显示真实统计和趋势', (tester) async {
-    await db.insertBill(
-      Bill(
-        money: 25,
-        type: 0,
-        category: '餐饮',
-        remark: '午饭',
-        createTime: '$thisMonth-01 12:00',
+    await tester.runAsync(
+      () => db.insertBill(
+        Bill(
+          money: 25,
+          type: 0,
+          category: '餐饮',
+          remark: '午饭',
+          createTime: '$thisMonth-01 12:00',
+        ),
       ),
     );
     await tester.pumpWidget(const MaterialApp(home: AiAnalysisPage()));
@@ -88,8 +96,10 @@ void main() {
 
   testWidgets('预算页可立即查看已保存的下月预算', (tester) async {
     final next = month(DateTime(now.year, now.month + 1));
-    await db.saveBudget(
-      Budget(totalBudget: 888, cateBudget: {'学习': 100}, month: next),
+    await tester.runAsync(
+      () => db.saveBudget(
+        Budget(totalBudget: 888, cateBudget: {'学习': 100}, month: next),
+      ),
     );
     await tester.pumpWidget(const MaterialApp(home: BudgetPage()));
     await settleDatabase(tester);
@@ -136,22 +146,24 @@ void main() {
     SettingsService.customModel = 'test';
     SettingsService.customApiKey = 'test';
     SettingsService.mode = 'custom';
-    await db.insertBills([
-      Bill(
-        money: 25,
-        type: 0,
-        category: '餐饮',
-        remark: '本月',
-        createTime: '$thisMonth-01 12:00',
-      ),
-      Bill(
-        money: 75,
-        type: 0,
-        category: '餐饮',
-        remark: '年内其他月',
-        createTime: '${now.year}-${now.month == 1 ? "02" : "01"}-01 12:00',
-      ),
-    ]);
+    await tester.runAsync(
+      () => db.insertBills([
+        Bill(
+          money: 25,
+          type: 0,
+          category: '餐饮',
+          remark: '本月',
+          createTime: '$thisMonth-01 12:00',
+        ),
+        Bill(
+          money: 75,
+          type: 0,
+          category: '餐饮',
+          remark: '年内其他月',
+          createTime: '${now.year}-${now.month == 1 ? "02" : "01"}-01 12:00',
+        ),
+      ]),
+    );
     String? prompt;
     await http.runWithClient(
       () async {

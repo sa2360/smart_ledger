@@ -29,6 +29,8 @@ target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 with os.fdopen(descriptor, "w", encoding="utf-8") as output:
     for key, value in values.items():
-        output.write(f"{key}={shlex.quote(value)}\n")
+        # EnvironmentFile uses systemd quoting, not shell concatenation (shlex.quote).
+        escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$')
+        output.write(f'{key}="{escaped}"\n')
     output.write("TRUST_PROXY=true\n")
 print("配置已保存到 root 私有环境文件。请在服务商控制台轮换旧密钥，并更新此文件。")

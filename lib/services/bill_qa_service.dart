@@ -13,7 +13,10 @@ class BillQaService {
     required List<String> billLines,
   }) async {
     final billText = billLines.isEmpty ? '（暂无账单记录）' : billLines.join('\n');
-    final system = '你是记账 App「一语记」的 AI 记账助手。'
+    final now = DateTime.now();
+    final system =
+        '你是记账 App「一语记」的 AI 记账助手。'
+        '今天是 ${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}，请据此区分本月和上月。'
         '以下是用户最近两个月的账单明细，格式为「时间 | 类型 | 分类 | 金额 | 备注」：\n'
         '$billText\n'
         '请根据这些真实数据回答用户的问题，要求：\n'
@@ -25,8 +28,7 @@ class BillQaService {
     // 构造多轮消息：系统提示 + 最近对话 + 本次提问
     final messages = <Map<String, String>>[
       {'role': 'system', 'content': system},
-      for (final m in history)
-        {'role': m.role, 'content': m.content},
+      for (final m in history) {'role': m.role, 'content': m.content},
       {'role': 'user', 'content': question},
     ];
     return LlmService.chatMessages(messages, temperature: 0.4);

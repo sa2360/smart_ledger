@@ -7,6 +7,18 @@ import '../models/budget.dart';
 import 'local_stores.dart';
 import 'settings_service.dart';
 
+/// 单次请求的配置快照，连接测试不会切换全局配置。
+class LlmConfiguration {
+  final String baseUrl;
+  final String model;
+  final String apiKey;
+  const LlmConfiguration({
+    required this.baseUrl,
+    required this.model,
+    required this.apiKey,
+  });
+}
+
 /// LLM 服务封装
 /// 默认使用构建时内置的智能模型服务（用户免配置），
 /// 也支持用户在「我的」页自定义 OpenAI 兼容接口（接口地址 / 模型名称 / API Key）。
@@ -25,35 +37,46 @@ class LlmService {
     String userContent, {
     String? system,
     double temperature = 0.3,
+    LlmConfiguration? configuration,
   }) async {
-    return chatMessages([
-      if (system != null) {'role': 'system', 'content': system},
-      {'role': 'user', 'content': userContent},
-    ], temperature: temperature);
+    return chatMessages(
+      [
+        if (system != null) {'role': 'system', 'content': system},
+        {'role': 'user', 'content': userContent},
+      ],
+      temperature: temperature,
+      configuration: configuration,
+    );
   }
 
   /// 多轮对话请求：messages 为完整的 OpenAI 格式消息列表
   static Future<String> chatMessages(
     List<Map<String, String>> messages, {
     double temperature = 0.3,
+    LlmConfiguration? configuration,
   }) async {
-    if (!isConfigured) {
+    if (configuration == null && !isConfigured) {
       throw LlmException('AI 服务未就绪，请到「我的」页开启内置模型或配置自定义模型');
     }
-    if (!SettingsService.validServiceUrl(baseUrl)) {
+    final config =
+        configuration ??
+        LlmConfiguration(baseUrl: baseUrl, model: model, apiKey: apiKey);
+    if (!SettingsService.validServiceUrl(config.baseUrl)) {
       throw LlmException('AI 接口必须使用有效的 HTTPS 地址');
     }
-    final uri = Uri.parse('$baseUrl/chat/completions');
+    final url = config.baseUrl.replaceFirst(RegExp(r'/+$'), '');
+    final uri = Uri.parse('$url/chat/completions');
     try {
       final resp = await http
           .post(
             uri,
             headers: {
               'Content-Type': 'application/json',
-              if (apiKey.isNotEmpty) 'Authorization': 'Bearer $apiKey',
+              if (config.apiKey.isNotEmpty)
+                'Authorization': 'Bearer ${config.apiKey}',
             },
             body: jsonEncode({
-              'model': model,
+              'model': config.model,
               'temperature': temperature,
               'messages': messages,
             }),
@@ -64,7 +87,12 @@ class LlmService {
         throw LlmException('接口返回 ${resp.statusCode}：${_brief(resp.body)}');
       }
       final data = jsonDecode(utf8.decode(resp.bodyBytes));
-      final content = data['choices']?[0]?['message']?['content'];
+      final choices = data is Map ? data['choices'] : null;
+      final first = choices is List && choices.isNotEmpty
+          ? choices.first
+          : null;
+      final message = first is Map ? first['message'] : null;
+      final content = message is Map ? message['content'] : null;
       if (content is! String || content.isEmpty) {
         throw LlmException('模型未返回内容');
       }
@@ -146,7 +174,7 @@ class NlBillParser {
         Bill(
           money: money,
           type: isIncome ? 1 : 0,
-          category: '${item['category'] ?? '其他'}',
+          category: _category(item['category'], isIncome: isIncome),
           remark: '${item['remark'] ?? ''}',
           createTime: defaultTime,
         ),
@@ -172,7 +200,8 @@ class ReceiptParser {
         '今天日期：${now.year}-${_p(now.month)}-${_p(now.day)} '
         '${_p(now.hour)}:${_p(now.minute)}。'
         '分类只能从以下选择：餐饮、交通、购物、娱乐、学习、医疗、居住、其他。'
-        '全部为支出（type=0）。金额取商品实付单价，忽略条码、编号等数字。'
+        '全部为支出（type=0）。金额取每个消费条目的实付总额，结合数量和折扣，不能只取单价。'
+        '商品明细与合计不能重复计入；无法可靠拆分时仅返回实付合计一条。忽略条码、编号等数字。'
         '必须只输出 JSON 数组，不要输出任何其他文字。每个元素格式：'
         '{"money":金额数字,"category":"分类","remark":"商品名，不超过12字"}。';
 
@@ -191,7 +220,7 @@ class ReceiptParser {
         Bill(
           money: money,
           type: 0,
-          category: '${item['category'] ?? '购物'}',
+          category: _category(item['category']),
           remark: '${item['remark'] ?? '小票消费'}',
           createTime: defaultTime,
         ),
@@ -239,7 +268,7 @@ class MonthlyAnalyzer {
         ? '''第二部分以「# 明年消费展望」为标题，基于全年消费趋势给出明年整体消费建议（2-3句）。'''
         : '''第二部分以「# 下月预算规划」为标题，说明规划思路（1-2句）。
 第三部分只输出一个 JSON 代码块（不要有其他文字），内容为下月各分类建议预算，格式：
-{"餐饮":数字,"交通":数字,"购物":数字,"娱乐":数字,"其他":数字}
+{"餐饮":数字,"交通":数字,"购物":数字,"娱乐":数字,"学习":数字,"医疗":数字,"居住":数字,"其他":数字}
 金额必须参考本月实际消费，合理收紧。''';
 
     final prompt =
@@ -293,4 +322,12 @@ $planInstruction''';
     }
     return (report, plan);
   }
+}
+
+String _category(Object? value, {bool isIncome = false}) {
+  final allowed = isIncome
+      ? const ['工资', '兼职', '理财', '红包', '其他']
+      : const ['餐饮', '交通', '购物', '娱乐', '学习', '医疗', '居住', '其他'];
+  final category = value is String ? value.trim() : '';
+  return allowed.contains(category) ? category : '其他';
 }

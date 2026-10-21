@@ -22,12 +22,14 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int _range = 1; // 0 今日 / 1 本月 / 2 全部
   bool _loading = true;
+  int _loadVersion = 0;
   double _monthExpense = 0, _monthIncome = 0, _todayExpense = 0;
   Budget? _budget;
   final List<Bill> _bills = [];
 
   // AI 周度预警：本周支出 / 近四周平均，> 平均 1.5 倍时提示
   bool _weekAlert = false;
+  bool _weeklyLoading = false;
   double _weekSpend = 0, _weekAvg = 0;
   String _weekKey = '';
 
@@ -60,6 +62,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
+    final version = ++_loadVersion;
+    final range = _range;
     final now = DateTime.now();
     final db = DatabaseHelper.instance;
     // 长时间驻留后台后回到 App，也补记到期的周期账单
@@ -70,11 +75,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       db.sumOfMonth(0, dayStr(now)),
       db.getBudget(monthStr(now)),
       db.queryBills(
-        month: _range != 2 ? monthStr(now) : null,
-        day: _range == 0 ? dayStr(now) : null,
+        month: range != 2 ? monthStr(now) : null,
+        day: range == 0 ? dayStr(now) : null,
       ),
     ]);
-    if (!mounted) return;
+    if (!mounted || version != _loadVersion) return;
     setState(() {
       _monthExpense = results[0] as double;
       _monthIncome = results[1] as double;
@@ -85,18 +90,20 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         ..addAll(results[4] as List<Bill>);
       _loading = false;
     });
-    _checkWeeklyAlert();
+    await _checkWeeklyAlert(version);
   }
 
   /// AI 周度预警：本周支出超过近四周平均的 1.5 倍时提示
-  Future<void> _checkWeeklyAlert() async {
+  Future<void> _checkWeeklyAlert(int version) async {
     final db = DatabaseHelper.instance;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final weekStart = today.subtract(Duration(days: today.weekday - 1));
     final thisWeek = await db.sumBetween(weekStart, now);
     if (thisWeek <= 0) {
-      if (mounted) setState(() => _weekAlert = false);
+      if (mounted && version == _loadVersion) {
+        setState(() => _weekAlert = false);
+      }
       return;
     }
 
@@ -115,6 +122,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final avg = prevSum / prevWeeks;
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted || version != _loadVersion) return;
     final dismissed =
         prefs.getString('alert_dismissed_week') == _weekKeyOf(weekStart);
     setState(() {
@@ -130,60 +138,69 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   /// 弹出 AI 对本周消费的简评（每周只请求一次，结果缓存）
   Future<void> _showWeeklyAiComment() async {
-    final prefs = await SharedPreferences.getInstance();
-    final cached = prefs.getString('alert_comment_$_weekKey');
-    if (cached != null) {
-      if (mounted) _showCommentDialog(cached);
-      return;
-    }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('AI 正在分析本周消费…'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    if (_weeklyLoading) return;
+    _weeklyLoading = true;
+    final weekKey = _weekKey;
+    final weekSpend = _weekSpend;
+    final weekAvg = _weekAvg;
     try {
-      final weekStart = DateTime.tryParse(_weekKey)!;
-      final bills = (await DatabaseHelper.instance.queryBills()).where((b) {
-        final d = DateTime.tryParse(b.createTime);
-        return d != null &&
-            !d.isBefore(weekStart) &&
-            !d.isAfter(DateTime.now()) &&
-            b.isExpense;
-      }).toList();
-      final lines = [
-        for (final b in bills.take(100))
-          '${b.createTime.substring(5, 10)} ${b.category} ${b.money.toStringAsFixed(2)}元 ${b.remark}',
-      ];
-      final reply = await LlmService.chat(
-        '用户本周（周${'一二三四五六日'[DateTime.now().weekday - 1]}）已支出 '
-        '${_weekSpend.toStringAsFixed(2)} 元，此前四周平均每周 ${_weekAvg.toStringAsFixed(2)} 元，'
-        '消费速度偏快。本周账单：\n${lines.join('\n')}\n'
-        '请用不超过 100 字指出本周消费的主要问题，并给 1-2 条立刻可执行的建议。',
-        system: '你是记账 App 的消费提醒助手，回答简洁、口语化、给出具体可执行建议。',
-        temperature: 0.4,
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString('alert_comment_$weekKey');
+      if (cached != null) {
+        if (mounted) _showCommentDialog(cached);
+        return;
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('AI 正在分析本周消费…'),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
-      await prefs.setString('alert_comment_$_weekKey', reply);
-      if (mounted) _showCommentDialog(reply);
-    } on LlmException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            behavior: SnackBarBehavior.floating,
-          ),
+      try {
+        final weekStart = DateTime.parse(weekKey);
+        final bills = (await DatabaseHelper.instance.queryBills()).where((b) {
+          final d = DateTime.tryParse(b.createTime);
+          return d != null &&
+              !d.isBefore(weekStart) &&
+              !d.isAfter(DateTime.now()) &&
+              b.isExpense;
+        }).toList();
+        final lines = [
+          for (final b in bills.take(100))
+            '${b.createTime.substring(5, 10)} ${b.category} ${b.money.toStringAsFixed(2)}元 ${b.remark}',
+        ];
+        final reply = await LlmService.chat(
+          '用户本周（周${'一二三四五六日'[DateTime.now().weekday - 1]}）已支出 '
+          '${weekSpend.toStringAsFixed(2)} 元，此前四周平均每周 ${weekAvg.toStringAsFixed(2)} 元，'
+          '消费速度偏快。本周账单：\n${lines.join('\n')}\n'
+          '请用不超过 100 字指出本周消费的主要问题，并给 1-2 条立刻可执行的建议。',
+          system: '你是记账 App 的消费提醒助手，回答简洁、口语化、给出具体可执行建议。',
+          temperature: 0.4,
         );
+        await prefs.setString('alert_comment_$weekKey', reply);
+        if (mounted && weekKey == _weekKey) _showCommentDialog(reply);
+      } on LlmException catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(e.message),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('分析失败：$e'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('分析失败：$e'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+    } finally {
+      _weeklyLoading = false;
     }
   }
 
@@ -212,7 +229,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _dismissAlert() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('alert_dismissed_week', _weekKey);
-    setState(() => _weekAlert = false);
+    if (mounted) setState(() => _weekAlert = false);
   }
 
   /// AI 周度预警横幅
